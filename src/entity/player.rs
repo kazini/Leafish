@@ -180,8 +180,6 @@ fn update_render_players(
 
         if let Some(pmodel) = &player_model.model {
             let renderer = renderer.clone();
-            let cam_yaw = renderer.camera.lock().yaw;
-            let cam_pitch = renderer.camera.lock().pitch;
             let mut models = renderer.models.lock();
             let mdl = models.get_model(pmodel).unwrap();
 
@@ -209,27 +207,16 @@ fn update_render_players(
                 disp: offset,
             });
 
-            // TODO This sucks
             if player_model.has_name_tag {
-                let view_vec = renderer.view_vector.lock();
-                let view = *view_vec;
-                let forward = Vector3::new(view.x, -view.y, view.z).normalize();;
-                let right = Vector3::unit_y().cross(forward).normalize();
-                let up = forward.cross(right).normalize();
-                
+                let view = *renderer.view_vector.lock();
+                let yaw = Rad(view.x.atan2(view.z));
+                let pitch = Rad(view.y.asin());
 
-                let rot = Matrix4::new(
-                    right.x,   right.y,   right.z,   0.0,
-                    up.x,      up.y,      up.z,      0.0,
-                    forward.x, forward.y, forward.z, 0.0,
-                    0.0,       0.0,       0.0,       1.0,
-                );
-
-                println!("up.y: {}, forward.y: {}", up.y, forward.y);
-
-                mdl.matrix[PlayerModelPart::NameTag as usize] = Matrix4::from_translation(
-                    offset + Vector3::new(0.0, (-24.0 / 16.0) - 0.6, 0.0),
-                ) * rot;
+                mdl.matrix[PlayerModelPart::NameTag as usize] = Matrix4::from(Decomposed {
+                    scale: 1.0,
+                    rot: Quaternion::from_angle_y(yaw) * Quaternion::from_angle_x(pitch),
+                    disp: offset + Vector3::new(0.0, (-24.0 / 16.0) - 0.6, 0.0),
+                });
             }
 
             mdl.matrix[PlayerModelPart::Head as usize] = offset_matrix
