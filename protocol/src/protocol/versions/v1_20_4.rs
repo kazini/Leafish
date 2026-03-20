@@ -106,7 +106,7 @@ protocol_packet_ids!(
             0x26 => Effect
             0x27 => Particle_f64
             0x28 => UpdateLight_WithTrust
-            0x29 => JoinGame_WorldNames_IsHard
+            0x29 => JoinGame_1_20
             0x2a => Maps
             0x2b => TradeList_WithRestock
             0x2c => EntityMove_i16
@@ -213,12 +213,13 @@ protocol_packet_ids!(
         serverbound Serverbound {
             0x00 => ConfigClientInformation
             0x02 => AcknowledgeConfiguration
+            0x03 => ConfigPong
             0x07 => ServerboundKnownPacks
         }
         clientbound Clientbound {
-            0x03 => FinishConfiguration
-            0x0e => ClientboundKnownPacks
             0x00 => ConfigPluginMessage
+            0x02 => FinishConfiguration
+            0x05 => ConfigRegistryData
         }
     }
 );

@@ -2386,6 +2386,29 @@ impl MappablePacket for packet::Packet {
                     is_flat: Some(join_game.is_flat),
                 })
             }
+            packet::Packet::JoinGame_1_20(join_game) => {
+                mapped_packet::MappedPacket::JoinGame(JoinGame {
+                    entity_id: join_game.entity_id,
+                    is_hardcore: Some(join_game.is_hardcore),
+                    gamemode: join_game.gamemode,
+                    previous_gamemode: Some(join_game.previous_gamemode as u8),
+                    world_names: Some(join_game.dimension_names.data),
+                    dimension_codec: None,
+                    dimension: None,
+                    dimension_name: Some(join_game.dimension_name),
+                    dimension_id: None,
+                    difficulty: None,
+                    level_type: None,
+                    world_name: None,
+                    hashed_seed: Some(join_game.hashed_seed),
+                    max_players: join_game.max_players.0,
+                    view_distance: Some(join_game.view_distance.0),
+                    reduced_debug_info: Some(join_game.reduced_debug_info),
+                    enable_respawn_screen: Some(join_game.enable_respawn_screen),
+                    is_debug: Some(join_game.is_debug),
+                    is_flat: Some(join_game.is_flat),
+                })
+            }
             packet::Packet::JoinGame_HashedSeed_Respawn(join_game) => {
                 mapped_packet::MappedPacket::JoinGame(JoinGame {
                     entity_id: join_game.entity_id,
@@ -4160,7 +4183,13 @@ impl MappablePacket for packet::Packet {
             | packet::Packet::ConfigClientInformation(_)
             | packet::Packet::FinishConfiguration(_)
             | packet::Packet::ClientboundKnownPacks(_)
-            | packet::Packet::ConfigPluginMessage(_) => {
+            | packet::Packet::ConfigPluginMessage(_)
+            | packet::Packet::ConfigPong(_)
+            | packet::Packet::ConfigPing(_)
+            | packet::Packet::ConfigRegistryData(_)
+            | packet::Packet::ConfigUpdateTags(_)
+            | packet::Packet::ConfigFeatureFlags(_)
+            | packet::Packet::ConfigDisconnect(_) => {
                 unreachable!("unexpected configuration packet in MappablePacket::map")
             }
         }

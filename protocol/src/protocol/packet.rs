@@ -1276,6 +1276,30 @@ state_packets!(
                 /// Whether the world is a superflat world
                 field is_flat: bool =,
             }
+            /// JoinGame for 1.20.4 (protocol 765) — adds simulation_distance,
+            /// do_limited_crafting, dimension_type field, and optional death location.
+            packet JoinGame_1_20 {
+                field entity_id: i32 =,
+                field is_hardcore: bool =,
+                field dimension_names: LenPrefixed<VarInt, String> =,
+                field max_players: VarInt =,
+                field view_distance: VarInt =,
+                field simulation_distance: VarInt =,
+                field reduced_debug_info: bool =,
+                field enable_respawn_screen: bool =,
+                field do_limited_crafting: bool =,
+                field dimension_type: String =,
+                field dimension_name: String =,
+                field hashed_seed: i64 =,
+                field gamemode: u8 =,
+                field previous_gamemode: i8 =,
+                field is_debug: bool =,
+                field is_flat: bool =,
+                field has_death_location: bool =,
+                field death_dimension: Option<String> = when(|p: &JoinGame_1_20| p.has_death_location),
+                field death_position: Option<i64> = when(|p: &JoinGame_1_20| p.has_death_location),
+                field portal_cooldown: VarInt =,
+            }
             packet JoinGame_WorldNames {
                 /// The entity id the client will be referenced by
                 field entity_id: i32 =,
@@ -2272,6 +2296,10 @@ state_packets!(
             packet ServerboundKnownPacks {
                 field known_packs: LenPrefixed<VarInt, packet::ConfigKnownPack> =,
             }
+            /// ConfigPong is sent in response to ConfigPing.
+            packet ConfigPong {
+                field id: i32 =,
+            }
             /// ClientInformation sent during configuration (same as in play but earlier)
             packet ConfigClientInformation {
                 field locale: String =,
@@ -2297,6 +2325,26 @@ state_packets!(
             packet ConfigPluginMessage {
                 field channel: String =,
                 field data: Vec<u8> =,
+            }
+            /// ConfigPing — server sends this; client must respond with ConfigPong.
+            packet ConfigPing {
+                field id: i32 =,
+            }
+            /// ConfigRegistryData — registry sync, raw bytes, can be skipped.
+            packet ConfigRegistryData {
+                field data: Vec<u8> =,
+            }
+            /// ConfigUpdateTags — tag sync, raw bytes, can be skipped.
+            packet ConfigUpdateTags {
+                field data: Vec<u8> =,
+            }
+            /// ConfigFeatureFlags — feature flags, raw bytes, can be skipped.
+            packet ConfigFeatureFlags {
+                field data: Vec<u8> =,
+            }
+            /// ConfigDisconnect — server disconnected during configuration.
+            packet ConfigDisconnect {
+                field reason: String =,
             }
         }
     }
