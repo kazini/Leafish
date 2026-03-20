@@ -304,6 +304,10 @@ struct Opt {
     assets_dir: Option<String>,
     #[structopt(long)]
     client_jar: Option<String>,
+
+    /// Auto-connect to this server address on startup (e.g. localhost:25565)
+    #[structopt(long)]
+    server: Option<String>,
 }
 
 // TODO: Hide own character and show only the right hand. (with an item)
@@ -334,6 +338,7 @@ struct LeafishApp {
     ui_container: Option<Rc<RefCell<ui::Container>>>,
     last_frame: Instant,
     last_resource_version: usize,
+    auto_connect_done: bool,
 
     #[cfg(feature = "wgpu-mc")]
     wgpu_bridge: Option<render::wgpu_mc::WgpuMcBridge>,
@@ -508,9 +513,8 @@ impl ApplicationHandler for LeafishApp {
             keybinds: self.keybinds.clone(),
         };
 
-        if self.opt.network_debug {
-            protocol::enable_network_debug();
-        }
+        // Always enable network debug to trace protocol issues
+        protocol::enable_network_debug();
 
         if let Some(ref filename) = self.opt.network_parse_packet.clone() {
             let data = fs::read(filename).unwrap();
@@ -550,6 +554,30 @@ impl ApplicationHandler for LeafishApp {
         ) else {
             return;
         };
+
+        // Auto-connect once on first frame if --server was given
+        if !self.auto_connect_done {
+            if let Some(ref addr) = self.opt.server.clone() {
+                self.auto_connect_done = true;
+                let game = game_rc.borrow();
+                // Set offline account if none selected yet
+                if game.current_account.lock().is_none() {
+                    let accounts = screen::launcher::load_accounts().unwrap_or_default();
+                    if let Some(account) = accounts.into_iter().next() {
+                        *game.current_account.lock() = Some(account);
+                    }
+                }
+                let hud_context = Arc::new(RwLock::new(HudContext::new()));
+                let hud_clone = hud_context.clone();
+                if let Err(e) = game.connect_to(addr, hud_context) {
+                    error!("Auto-connect to {} failed: {:?}", addr, e);
+                } else {
+                    game.screen_sys.close_closable_screens();
+                    game.screen_sys
+                        .add_screen(Box::new(render::hud::Hud::new(hud_clone)));
+                }
+            }
+        }
 
         let game = game_rc.borrow();
         let mut ui_container = ui_rc.borrow_mut();
@@ -681,6 +709,7 @@ fn main() {
         ui_container: None,
         last_frame: Instant::now(),
         last_resource_version: 0,
+        auto_connect_done: false,
         #[cfg(feature = "wgpu-mc")]
         wgpu_bridge: None,
     };
