@@ -21,6 +21,8 @@ pub mod hud;
 pub mod inventory;
 pub mod model;
 pub mod ui;
+#[cfg(feature = "wgpu-mc")]
+pub mod wgpu_mc;
 
 // TODO: Fix skin misassignment - happens even if this client joins only one server and stays there
 // TODO: But only one person gets a random skin from another person, but if the first person rejoins, their skin gets normal again.
