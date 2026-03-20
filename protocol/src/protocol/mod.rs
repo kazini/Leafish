@@ -274,6 +274,7 @@ macro_rules! protocol_packet_ids {
                         }
                     }
                 )*
+                _ => panic!("state {:?} not supported in this version", state),
             }
         }
     }
@@ -1043,6 +1044,7 @@ pub enum State {
     Play,
     Status,
     Login,
+    Configuration,
 }
 
 /// Return for any protocol related error.

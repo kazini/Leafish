@@ -2126,6 +2126,11 @@ state_packets!(
             packet LoginStart {
                 field username: String =,
             }
+            /// LoginAcknowledged is sent by the client after receiving LoginSuccess (1.20.2+).
+            /// The server transitions to the Configuration state upon receiving this.
+            packet LoginAcknowledged {
+                field empty: () =,
+            }
             /// EncryptionResponse is sent as a reply to EncryptionRequest. All
             /// packets following this one must be encrypted with AES/CFB8
             /// encryption.
@@ -2184,12 +2189,11 @@ state_packets!(
                 field uuid: UUID =,
                 field username: String =,
             }
-            /// LoginSuccess for 1.20.4+ — includes profile properties array and strict flag
+            /// LoginSuccess for 1.20.4+ — includes profile properties array (no strict flag in 1.20.4)
             packet LoginSuccess_UUID_Properties {
                 field uuid: UUID =,
                 field username: String =,
                 field properties: LenPrefixed<VarInt, packet::LoginProperty> =,
-                field strict_error_handling: bool =,
             }
             /// SetInitialCompression sets the compression threshold during the
             /// login state.
@@ -2257,7 +2261,68 @@ state_packets!(
             }
        }
     }
+    configuration Configuration {
+        serverbound Serverbound {
+            /// AcknowledgeConfiguration is sent by the client to confirm it has finished
+            /// the configuration phase (1.20.2+). Transitions the server to Play state.
+            packet AcknowledgeConfiguration {
+                field empty: () =,
+            }
+            /// ServerboundKnownPacks is sent in response to ClientboundKnownPacks.
+            packet ServerboundKnownPacks {
+                field known_packs: LenPrefixed<VarInt, packet::ConfigKnownPack> =,
+            }
+            /// ClientInformation sent during configuration (same as in play but earlier)
+            packet ConfigClientInformation {
+                field locale: String =,
+                field view_distance: i8 =,
+                field chat_mode: VarInt =,
+                field chat_colors: bool =,
+                field displayed_skin_parts: u8 =,
+                field main_hand: VarInt =,
+                field enable_text_filtering: bool =,
+                field allow_server_listings: bool =,
+            }
+        }
+        clientbound Clientbound {
+            /// FinishConfiguration is sent by the server to end the configuration phase.
+            packet FinishConfiguration {
+                field empty: () =,
+            }
+            /// ClientboundKnownPacks asks the client which data packs it has.
+            packet ClientboundKnownPacks {
+                field known_packs: LenPrefixed<VarInt, packet::ConfigKnownPack> =,
+            }
+            /// ConfigPluginMessage is a plugin message sent during configuration.
+            packet ConfigPluginMessage {
+                field channel: String =,
+                field data: Vec<u8> =,
+            }
+        }
+    }
 );
+
+#[derive(Debug, Default)]
+pub struct ConfigKnownPack {
+    pub namespace: String,
+    pub id: String,
+    pub version: String,
+}
+
+impl Serializable for ConfigKnownPack {
+    fn read_from<R: io::Read>(buf: &mut R) -> Result<Self, Error> {
+        Ok(ConfigKnownPack {
+            namespace: Serializable::read_from(buf)?,
+            id: Serializable::read_from(buf)?,
+            version: Serializable::read_from(buf)?,
+        })
+    }
+    fn write_to<W: io::Write>(&self, buf: &mut W) -> Result<(), Error> {
+        self.namespace.write_to(buf)?;
+        self.id.write_to(buf)?;
+        self.version.write_to(buf)
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct SpawnProperty {

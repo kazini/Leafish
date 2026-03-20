@@ -4154,6 +4154,15 @@ impl MappablePacket for packet::Packet {
                     warning_blocks: border.warning_blocks.map(|x| x.0),
                 })
             }
+            packet::Packet::LoginAcknowledged(_)
+            | packet::Packet::AcknowledgeConfiguration(_)
+            | packet::Packet::ServerboundKnownPacks(_)
+            | packet::Packet::ConfigClientInformation(_)
+            | packet::Packet::FinishConfiguration(_)
+            | packet::Packet::ClientboundKnownPacks(_)
+            | packet::Packet::ConfigPluginMessage(_) => {
+                unreachable!("unexpected configuration packet in MappablePacket::map")
+            }
         }
     }
 }

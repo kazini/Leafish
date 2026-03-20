@@ -189,7 +189,7 @@ protocol_packet_ids!(
             0x00 => LoginStart
             0x01 => EncryptionResponse
             0x02 => LoginPluginResponse
-            // 0x03 => login_acknowledged (no internal equivalent)
+            0x03 => LoginAcknowledged
         }
         clientbound Clientbound {
             0x00 => LoginDisconnect
@@ -207,6 +207,18 @@ protocol_packet_ids!(
         clientbound Clientbound {
             0x00 => StatusResponse
             0x01 => StatusPong
+        }
+    }
+    configuration Configuration {
+        serverbound Serverbound {
+            0x00 => ConfigClientInformation
+            0x02 => AcknowledgeConfiguration
+            0x07 => ServerboundKnownPacks
+        }
+        clientbound Clientbound {
+            0x03 => FinishConfiguration
+            0x0e => ClientboundKnownPacks
+            0x00 => ConfigPluginMessage
         }
     }
 );

@@ -93,3 +93,7 @@ version = "0"
 [dependencies.leafish_protocol]
 path = "./protocol"
 version = "0"
+
+[[test]]
+name = "protocol_1_20_4"
+path = "probes/protocol_1_20_4.rs"
