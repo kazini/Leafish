@@ -18,6 +18,7 @@ pub enum Version {
     V1_17,
     V1_18,
     V1_19,
+    V1_20,
     New,
 }
 
@@ -40,7 +41,8 @@ impl Version {
             755..=756 => Version::V1_17,
             757..=758 => Version::V1_18,
             759..=760 => Version::V1_19,
-            761..=u32::MAX => Version::New,
+            761..=765 => Version::V1_20,
+            766..=u32::MAX => Version::New,
             _ => Version::Other,
         }
     }

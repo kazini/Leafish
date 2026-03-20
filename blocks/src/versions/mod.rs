@@ -26,6 +26,7 @@ pub fn get_block_mapping(version: Version) -> &'static [Block] {
         Version::V1_17 => v1_17_1::MAPPING,
         Version::V1_18 => v1_18_2::MAPPING,
         Version::V1_19 => v1_19::MAPPING,
+        Version::V1_20 => v1_19::MAPPING,
         _ => unreachable!(),
     }
 }

@@ -12,6 +12,7 @@ mod v1_14_4;
 mod v1_15;
 mod v1_16_1;
 mod v1_16_4;
+mod v1_20_4;
 mod v1_7_10;
 mod v1_8_9;
 mod v1_9;
@@ -63,6 +64,7 @@ pub fn translate_internal_packet_id_for_version(
     to_internal: bool,
 ) -> i32 {
     match version {
+        765 => v1_20_4::translate_internal_packet_id(state, dir, id, to_internal),
         754 | 753 | 751 => v1_16_4::translate_internal_packet_id(state, dir, id, to_internal),
         736 => v1_16_1::translate_internal_packet_id(state, dir, id, to_internal),
         735 => v1_16_1::translate_internal_packet_id(state, dir, id, to_internal),
