@@ -466,17 +466,39 @@ fn add_player(renderer: Arc<Renderer>, player_model: &mut PlayerModel) {
         // TODO: Remove black shadow and add dark, transparent box around name
         let width = state.width;
         // Center align text
-        for vert in &mut state.text {
+        /*for vert in &mut state.text {
             vert.x += width * 0.5;
             vert.r = 64;
             vert.g = 64;
             vert.b = 64;
         }
-        name_verts.extend_from_slice(&state.text);
+        name_verts.extend_from_slice(&state.text);*/
+let solid = Renderer::get_texture(&renderer.get_textures(), "leafish:solid");
+    let vert_id = state.text.first().map_or(0, |v| v.id);
+
+    let pad_x = 0.;//0.05;
+    let pad_y = 0.;//0.02;
+    let box_z = 0.;//0.06;
+    let x0 = -(width * 0.5) - pad_x;
+    let x1 =  (width * 0.5) + pad_x;
+    let y0 = -pad_y;
+    let y1 = state.y_scale + pad_y;
+
+    let make_box_vert = |x, y| render::model::Vertex {
+        x, y, z: box_z,
+        texture: solid.clone(),
+        texture_x: 0.0,
+        texture_y: 0.0,
+        r: 0, g: 0, b: 0, a: 160,
+        id: vert_id,
+    };
+
+    name_verts.extend_from_slice(&[
+        make_box_vert(x0, y0), make_box_vert(x1, y0), make_box_vert(x0, y1), make_box_vert(x1, y1),
+    ]);
+
         for vert in &mut state.text {
-            vert.x -= 0.01;
-            vert.y -= 0.01;
-            vert.z -= 0.05;
+            vert.x += width * 0.5;
             vert.r = 255;
             vert.g = 255;
             vert.b = 255;
