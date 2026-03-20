@@ -1,7 +1,7 @@
 use crate::protocol::mapped_packet::handshake::serverbound::Handshake;
 use crate::protocol::mapped_packet::login::clientbound::{
     EncryptionRequest, LoginDisconnect, LoginPluginRequest, LoginSuccess_String, LoginSuccess_UUID,
-    SetInitialCompression,
+    LoginSuccess_UUID_Properties, SetInitialCompression,
 };
 use crate::protocol::mapped_packet::login::serverbound::{
     EncryptionResponse, LoginPluginResponse, LoginStart,
@@ -1342,6 +1342,10 @@ state_mapped_packets!(
                 field uuid: UUID,
                 field username: String,
             }
+            packet LoginSuccess_UUID_Properties {
+                field uuid: UUID,
+                field username: String,
+            }
             /// SetInitialCompression sets the compression threshold during the
             /// login state.
             packet SetInitialCompression {
@@ -2475,6 +2479,14 @@ impl MappablePacket for packet::Packet {
                     uuid: login_success.uuid,
                     username: login_success.username,
                 })
+            }
+            packet::Packet::LoginSuccess_UUID_Properties(login_success) => {
+                mapped_packet::MappedPacket::LoginSuccess_UUID_Properties(
+                    LoginSuccess_UUID_Properties {
+                        uuid: login_success.uuid,
+                        username: login_success.username,
+                    },
+                )
             }
             packet::Packet::Maps(maps) => mapped_packet::MappedPacket::Maps(Maps {
                 item_damage: maps.item_damage.0,

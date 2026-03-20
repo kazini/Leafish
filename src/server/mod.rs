@@ -240,6 +240,23 @@ impl Server {
 
                     return Ok(server);
                 }
+                protocol::packet::Packet::LoginSuccess_UUID_Properties(val) => {
+                    warn!("Server is running in offline mode");
+                    debug!("Login: {} {:?}", val.username, val.uuid);
+                    conn.state = protocol::State::Play;
+                    let server = Server::connect0(
+                        conn,
+                        protocol_version,
+                        forge_mods,
+                        val.uuid,
+                        resources,
+                        renderer,
+                        hud_context,
+                        screen_sys,
+                    );
+
+                    return Ok(server);
+                }
                 protocol::packet::Packet::LoginDisconnect(val) => {
                     return Err(protocol::Error::Disconnect(val.reason))
                 }
@@ -285,6 +302,12 @@ impl Server {
                     break;
                 }
                 protocol::packet::Packet::LoginSuccess_UUID(val) => {
+                    debug!("Login: {} {:?}", val.username, val.uuid);
+                    uuid = val.uuid;
+                    conn.state = protocol::State::Play;
+                    break;
+                }
+                protocol::packet::Packet::LoginSuccess_UUID_Properties(val) => {
                     debug!("Login: {} {:?}", val.username, val.uuid);
                     uuid = val.uuid;
                     conn.state = protocol::State::Play;

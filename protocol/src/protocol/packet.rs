@@ -2184,6 +2184,13 @@ state_packets!(
                 field uuid: UUID =,
                 field username: String =,
             }
+            /// LoginSuccess for 1.20.4+ — includes profile properties array and strict flag
+            packet LoginSuccess_UUID_Properties {
+                field uuid: UUID =,
+                field username: String =,
+                field properties: LenPrefixed<VarInt, packet::LoginProperty> =,
+                field strict_error_handling: bool =,
+            }
             /// SetInitialCompression sets the compression threshold during the
             /// login state.
             packet SetInitialCompression {
@@ -2257,6 +2264,38 @@ pub struct SpawnProperty {
     pub name: String,
     pub value: String,
     pub signature: String,
+}
+
+#[derive(Debug, Default)]
+pub struct LoginProperty {
+    pub name: String,
+    pub value: String,
+    pub signature: Option<String>,
+}
+
+impl Serializable for LoginProperty {
+    fn read_from<R: io::Read>(buf: &mut R) -> Result<Self, Error> {
+        let name = Serializable::read_from(buf)?;
+        let value = Serializable::read_from(buf)?;
+        let is_signed: bool = Serializable::read_from(buf)?;
+        let signature = if is_signed {
+            Some(Serializable::read_from(buf)?)
+        } else {
+            None
+        };
+        Ok(LoginProperty { name, value, signature })
+    }
+
+    fn write_to<W: io::Write>(&self, buf: &mut W) -> Result<(), Error> {
+        self.name.write_to(buf)?;
+        self.value.write_to(buf)?;
+        let is_signed = self.signature.is_some();
+        is_signed.write_to(buf)?;
+        if let Some(sig) = &self.signature {
+            sig.write_to(buf)?;
+        }
+        Ok(())
+    }
 }
 
 impl Serializable for SpawnProperty {
