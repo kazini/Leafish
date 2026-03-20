@@ -153,6 +153,47 @@ pub struct PlayerInfo {
     gamemode: GameMode,
 }
 
+/// For 1.20.2+ (protocol >= 764), after LoginSuccess the client must send
+/// LoginAcknowledged, then process the Configuration state until FinishConfiguration,
+/// then send AcknowledgeConfiguration before entering Play.
+fn do_configuration_handshake(conn: &mut protocol::Conn) -> Result<(), protocol::Error> {
+    use protocol::packet::{configuration, Packet};
+
+    conn.write_packet(protocol::packet::login::serverbound::LoginAcknowledged { empty: () })?;
+    conn.state = protocol::State::Configuration;
+
+    loop {
+        match conn.read_packet()? {
+            Packet::FinishConfiguration(_) => {
+                conn.write_packet(configuration::serverbound::AcknowledgeConfiguration {
+                    empty: (),
+                })?;
+                conn.state = protocol::State::Play;
+                return Ok(());
+            }
+            Packet::ClientboundKnownPacks(_) => {
+                conn.write_packet(configuration::serverbound::ServerboundKnownPacks {
+                    known_packs: protocol::LenPrefixed::new(vec![]),
+                })?;
+            }
+            Packet::ConfigPing(ping) => {
+                conn.write_packet(configuration::serverbound::ConfigPong { id: ping.id })?;
+            }
+            // Plugin messages, registry data, feature flags, update tags — safe to ignore
+            Packet::ConfigPluginMessage(_)
+            | Packet::ConfigRegistryData(_)
+            | Packet::ConfigFeatureFlags(_)
+            | Packet::ConfigUpdateTags(_) => {}
+            Packet::ConfigDisconnect(d) => {
+                return Err(protocol::Error::Err(format!("Disconnected during configuration: {}", d.reason)))
+            }
+            other => {
+                debug!("Ignoring configuration packet: {:?}", other);
+            }
+        }
+    }
+}
+
 impl Server {
     pub fn connect(
         resources: Arc<RwLock<resources::Manager>>,
@@ -243,7 +284,7 @@ impl Server {
                 protocol::packet::Packet::LoginSuccess_UUID_Properties(val) => {
                     warn!("Server is running in offline mode");
                     debug!("Login: {} {:?}", val.username, val.uuid);
-                    conn.state = protocol::State::Play;
+                    do_configuration_handshake(&mut conn)?;
                     let server = Server::connect0(
                         conn,
                         protocol_version,
@@ -310,7 +351,7 @@ impl Server {
                 protocol::packet::Packet::LoginSuccess_UUID_Properties(val) => {
                     debug!("Login: {} {:?}", val.username, val.uuid);
                     uuid = val.uuid;
-                    conn.state = protocol::State::Play;
+                    do_configuration_handshake(&mut conn)?;
                     break;
                 }
                 protocol::packet::Packet::LoginDisconnect(val) => {
