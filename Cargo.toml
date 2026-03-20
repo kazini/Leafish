@@ -66,7 +66,7 @@ rayon = "1.5"
 rfd = "0.14"
 bevy_ecs = "0.13"
 
-reqwest = { version = "0.11", features = [ "blocking" ]}
+reqwest = { version = "0.12", features = [ "blocking" ]}
 # glutin = "0.29"
 glutin = "0.31"
 glutin-winit = "0.4"
