@@ -18,7 +18,7 @@ use crate::types::GameMode;
 use crate::world;
 use arc_swap::ArcSwapOption;
 use bevy_ecs::prelude::*;
-use cgmath::{Decomposed, Matrix4, Point3, Quaternion, Rad, Rotation3, Vector3};
+use cgmath::{Decomposed, InnerSpace, Matrix4, Point3, Quaternion, Rad, Rotation3, Vector3};
 use collision::{Aabb, Aabb3};
 use instant::Instant;
 use leafish_protocol::format::Component;
@@ -180,8 +180,8 @@ fn update_render_players(
 
         if let Some(pmodel) = &player_model.model {
             let renderer = renderer.clone();
-            let cam_x = renderer.camera.lock().pos.x;
-            let cam_z = renderer.camera.lock().pos.z;
+            let cam_yaw = renderer.camera.lock().yaw;
+            let cam_pitch = renderer.camera.lock().pitch;
             let mut models = renderer.models.lock();
             let mdl = models.get_model(pmodel).unwrap();
 
@@ -211,12 +211,25 @@ fn update_render_players(
 
             // TODO This sucks
             if player_model.has_name_tag {
-                let ang = (position.position.x - cam_x).atan2(position.position.z - cam_z) as f32;
-                mdl.matrix[PlayerModelPart::NameTag as usize] = Matrix4::from(Decomposed {
-                    scale: 1.0,
-                    rot: Quaternion::from_angle_y(Rad(ang)),
-                    disp: offset + Vector3::new(0.0, (-24.0 / 16.0) - 0.6, 0.0),
-                });
+                let view_vec = renderer.view_vector.lock();
+                let view = *view_vec;
+                let forward = Vector3::new(view.x, -view.y, view.z).normalize();;
+                let right = Vector3::unit_y().cross(forward).normalize();
+                let up = forward.cross(right).normalize();
+                
+
+                let rot = Matrix4::new(
+                    right.x,   right.y,   right.z,   0.0,
+                    up.x,      up.y,      up.z,      0.0,
+                    forward.x, forward.y, forward.z, 0.0,
+                    0.0,       0.0,       0.0,       1.0,
+                );
+
+                println!("up.y: {}, forward.y: {}", up.y, forward.y);
+
+                mdl.matrix[PlayerModelPart::NameTag as usize] = Matrix4::from_translation(
+                    offset + Vector3::new(0.0, (-24.0 / 16.0) - 0.6, 0.0),
+                ) * rot;
             }
 
             mdl.matrix[PlayerModelPart::Head as usize] = offset_matrix
