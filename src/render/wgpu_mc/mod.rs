@@ -9,13 +9,8 @@
 ///
 /// # Display construction
 ///
-/// `WgpuMcBridge::new` accepts a pre-constructed [`wgpu_mc::Display`].
-/// Building the Display requires a wgpu `Surface`, which in turn needs a
-/// raw window handle.  The caller is responsible for that step; a helper
-/// [`create_display`] is provided for convenience.
-///
-/// Once Leafish upgrades to `winit 0.30` / `raw-window-handle 0.6` (matching
-/// wgpu-mc's deps), `create_display` can be called directly with the window.
+/// `WgpuMcBridge::new` accepts an `Arc<winit::window::Window>` and calls
+/// `create_display` internally to build the wgpu `Display`.
 
 pub mod block_state_provider;
 pub mod math;
@@ -29,7 +24,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use wgpu_mc::mc::resource::ResourceProvider;
 use wgpu_mc::wgpu::PresentMode;
-use wgpu_mc::{wgpu, Display, WmRenderer};
+use wgpu_mc::{Display, WmRenderer};
 
 use crate::resources;
 
@@ -39,17 +34,17 @@ pub struct WgpuMcBridge {
 }
 
 impl WgpuMcBridge {
-    /// Create the bridge from a fully initialised `Display`.
-    ///
-    /// Call [`create_display`] to build the `Display`, or construct it yourself
-    /// when integrating into an existing wgpu setup.
-    pub fn new(display: Display, resources: Arc<RwLock<resources::Manager>>) -> Self {
+    /// Create the bridge from a winit window. Calls [`create_display`] internally.
+    pub fn new(
+        window: Arc<winit::window::Window>,
+        vsync: bool,
+        resources: Arc<RwLock<resources::Manager>>,
+    ) -> Self {
+        let display = create_display(window, vsync);
         let resource_provider: Arc<dyn ResourceProvider> =
             Arc::new(LeafishResourceProvider::new(resources));
-
         let renderer = WmRenderer::new(display, resource_provider);
         renderer.init();
-
         Self { renderer }
     }
 
@@ -65,29 +60,29 @@ impl WgpuMcBridge {
     }
 }
 
-/// Build a wgpu-mc [`Display`] — example skeleton, not yet wired to Leafish's window.
-///
-/// TODO: Call this once Leafish upgrades to `winit 0.30` + `raw-window-handle 0.6`.
-/// Until then construct `Display` manually or provide a pre-built Surface.
-pub fn display_setup_example(
-    instance: wgpu::Instance,
-    surface: wgpu::Surface<'static>,
-    width: u32,
-    height: u32,
-    vsync: bool,
-) -> Display {
+/// Build a wgpu-mc [`Display`] from a winit window.
+pub fn create_display(window: Arc<winit::window::Window>, vsync: bool) -> Display {
     use futures::executor::block_on;
     use wgpu_mc::wgpu::{
-        DeviceDescriptor, Features, Limits, MemoryHints, PowerPreference, RequestAdapterOptions,
-        SurfaceConfiguration, TextureFormat, TextureUsages,
+        Backends, DeviceDescriptor, Features, Instance, InstanceDescriptor, Limits, MemoryHints,
+        PowerPreference, RequestAdapterOptions, SurfaceConfiguration, TextureFormat, TextureUsages,
     };
+
+    let instance = Instance::new(InstanceDescriptor {
+        backends: Backends::PRIMARY,
+        ..Default::default()
+    });
+
+    let surface = instance
+        .create_surface(window.clone())
+        .expect("wgpu surface");
 
     let adapter = block_on(instance.request_adapter(&RequestAdapterOptions {
         power_preference: PowerPreference::HighPerformance,
         force_fallback_adapter: false,
         compatible_surface: Some(&surface),
     }))
-    .expect("no suitable wgpu adapter found");
+    .expect("no suitable wgpu adapter");
 
     let (device, queue) = block_on(adapter.request_device(
         &DeviceDescriptor {
@@ -106,7 +101,7 @@ pub fn display_setup_example(
         },
         None,
     ))
-    .expect("wgpu device creation failed");
+    .expect("wgpu device");
 
     let caps = surface.get_capabilities(&adapter);
     let present_mode = if vsync {
@@ -116,17 +111,17 @@ pub fn display_setup_example(
     } else {
         caps.present_modes[0]
     };
+    let size = window.inner_size();
     let config = SurfaceConfiguration {
         usage: TextureUsages::RENDER_ATTACHMENT,
         format: TextureFormat::Bgra8Unorm,
-        width,
-        height,
+        width: size.width,
+        height: size.height,
         present_mode,
         desired_maximum_frame_latency: 2,
         alpha_mode: caps.alpha_modes[0],
         view_formats: vec![],
     };
-
     surface.configure(&device, &config);
 
     Display {

@@ -44,6 +44,9 @@ use std::fs;
 use std::num::NonZeroU32;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
+use winit::application::ApplicationHandler;
+use winit::event::{DeviceEvent, DeviceId, WindowEvent};
+use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::Key;
 use winit::keyboard::ModifiersState;
 use winit::keyboard::NamedKey;
@@ -54,6 +57,7 @@ use winit::raw_window_handle::HasDisplayHandle;
 use winit::raw_window_handle::RawDisplayHandle;
 use winit::window::CursorGrabMode;
 use winit::window::Icon;
+use winit::window::WindowId;
 extern crate leafish_shared as shared;
 
 use structopt::StructOpt;
@@ -310,52 +314,54 @@ struct Opt {
 // TODO: Fix cursor grabbing/visibility/transparency of window.
 // TODO: Improve clouds.
 // TODO: Fix pistons.
-fn main() {
-    let opt = Opt::from_args();
-    #[allow(clippy::arc_with_non_send_sync)]
-    let con = Arc::new(Mutex::new(console::Console::new()));
-    let proxy = console::ConsoleProxy::new(con.clone());
 
-    log::set_boxed_logger(Box::new(proxy)).unwrap();
-    log::set_max_level(log::LevelFilter::Trace);
+/// Holds all pre-run state and post-resumed runtime state for the application.
+struct LeafishApp {
+    // Pre-initialized (available before resumed())
+    opt: Opt,
+    con: Arc<Mutex<console::Console>>,
+    settings: Arc<settings::SettingStore>,
+    keybinds: Arc<settings::KeybindStore>,
+    resource_manager: Arc<RwLock<resources::Manager>>,
+    resui: resources::ManagerUI,
+    vsync: bool,
 
-    info!("Starting Leafish...");
+    // Initialized in resumed()
+    window: Option<Arc<winit::window::Window>>,
+    gl_surface: Option<glutin::surface::Surface<glutin::surface::WindowSurface>>,
+    gl_context: Option<glutin::context::PossiblyCurrentContext>,
+    game: Option<Rc<RefCell<Game>>>,
+    ui_container: Option<Rc<RefCell<ui::Container>>>,
+    last_frame: Instant,
+    last_resource_version: usize,
 
-    let settings = Arc::new(SettingStore::new());
-    let keybinds = Arc::new(KeybindStore::new());
-    info!("settings all loaded!");
+    #[cfg(feature = "wgpu-mc")]
+    wgpu_bridge: Option<render::wgpu_mc::WgpuMcBridge>,
+}
 
-    con.lock().configure(&settings);
-    let vsync = settings.get_bool(BoolSetting::Vsync);
+impl ApplicationHandler for LeafishApp {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        // Already initialized — skip re-entry (e.g. on Android resume)
+        if self.window.is_some() {
+            return;
+        }
 
-    let (res, mut resui) = resources::Manager::new(
-        opt.assets_dir
-            .clone()
-            .zip(opt.asset_index.clone())
-            .map(|(dir, idx)| format!("{}/indexes/{}.json", dir, idx)),
-        opt.client_jar.clone(),
-    );
-    let resource_manager = Arc::new(RwLock::new(res));
+        let window_attributes = winit::window::Window::default_attributes()
+            .with_title("Leafish")
+            .with_window_icon(Some(
+                Icon::from_rgba(
+                    image::load_from_memory(include_bytes!("../resources/icon32x32.png"))
+                        .unwrap()
+                        .into_rgba8()
+                        .into_vec(),
+                    32,
+                    32,
+                )
+                .unwrap(),
+            ))
+            .with_inner_size(winit::dpi::LogicalSize::new(854.0, 480.0)) // FIXME: Why are we using this particular value here?
+            .with_maximized(true);
 
-    let events_loop = winit::event_loop::EventLoop::new().unwrap();
-
-    let window_attributes = winit::window::Window::default_attributes()
-        .with_title("Leafish")
-        .with_window_icon(Some(
-            Icon::from_rgba(
-                image::load_from_memory(include_bytes!("../resources/icon32x32.png"))
-                    .unwrap()
-                    .into_rgba8()
-                    .into_vec(),
-                32,
-                32,
-            )
-            .unwrap(),
-        ))
-        .with_inner_size(winit::dpi::LogicalSize::new(854.0, 480.0)) // FIXME: Why are we using this particular value here?
-        .with_maximized(true);
-
-    let (context, shader_version, window, surface, display) = {
         let template = ConfigTemplateBuilder::new()
             .with_stencil_size(0)
             .with_depth_size(24)
@@ -363,17 +369,14 @@ fn main() {
         let display_builder = DisplayBuilder::new().with_window_attributes(Some(window_attributes));
 
         let (window, gl_config) = display_builder
-            .build(&events_loop, template, |mut configs| {
-                configs.next().unwrap()
-            })
+            .build(event_loop, template, |mut configs| configs.next().unwrap())
             .unwrap();
 
         let raw_window_handle = window
             .as_ref()
-            .map(|window| window.window_handle().unwrap().as_raw());
+            .map(|w| w.window_handle().unwrap().as_raw());
         let gl_display = gl_config.display();
         let context_attributes = ContextAttributesBuilder::new().build(raw_window_handle);
-
         let fallback_context_attributes = ContextAttributesBuilder::new()
             .with_context_api(ContextApi::Gles(None))
             .build(raw_window_handle);
@@ -393,7 +396,7 @@ fn main() {
             ContextApi::Gles(_) => "#version 300 es", // OpenGL ES 3.0 (similar to WebGL 2)
         };
 
-        let window = window.unwrap();
+        let window = Arc::new(window.unwrap());
 
         let attrs = window.build_surface_attributes(Default::default()).unwrap();
         let gl_surface = unsafe {
@@ -403,11 +406,9 @@ fn main() {
                 .unwrap()
         };
 
-        // Make it current.
         let gl_context = not_current_gl_context.make_current(&gl_surface).unwrap();
 
-        if vsync {
-            // Try setting vsync.
+        if self.vsync {
             if let Err(res) = gl_surface
                 .set_swap_interval(&gl_context, SwapInterval::Wait(NonZeroU32::new(1).unwrap()))
             {
@@ -415,55 +416,51 @@ fn main() {
             }
         }
 
-        (gl_context, shader_version, window, gl_surface, gl_display)
-    };
+        gl::init(&gl_display);
+        info!("Shader version: {}", shader_version);
 
-    gl::init(&display);
-    info!("Shader version: {}", shader_version);
+        let renderer = render::Renderer::new(self.resource_manager.clone(), shader_version);
+        let ui_container = ui::Container::new();
 
-    let renderer = render::Renderer::new(resource_manager.clone(), shader_version);
-    let ui_container = ui::Container::new();
+        let screen_sys = Arc::new(screen::ScreenSystem::new());
+        let active_account = Arc::new(Mutex::new(None));
+        screen_sys.add_screen(Box::new(screen::background::Background::new(
+            self.settings.clone(),
+            screen_sys.clone(),
+        )));
+        let mut accounts = screen::launcher::load_accounts().unwrap_or_default();
+        if let Some((name, uuid, token)) = self
+            .opt
+            .name
+            .clone()
+            .and_then(|name| {
+                self.opt
+                    .uuid
+                    .clone()
+                    .map(|uuid| self.opt.token.clone().map(|token| (name, uuid, token)))
+            })
+            .flatten()
+        {
+            println!("Got microsoft credentials, adding account...");
+            accounts.push(Account {
+                name: name.clone(),
+                uuid: Some(uuid),
+                verification_tokens: vec![name, "".to_string(), token],
+                head_img_data: None,
+                account_type: AccountType::Microsoft,
+            });
+        }
+        screen_sys.add_screen(Box::new(screen::launcher::Launcher::new(
+            Arc::new(Mutex::new(accounts)),
+            screen_sys.clone(),
+            active_account.clone(),
+        )));
 
-    let mut last_frame = Instant::now();
+        let textures = renderer.get_textures();
 
-    let screen_sys = Arc::new(screen::ScreenSystem::new());
-    let active_account = Arc::new(Mutex::new(None));
-    screen_sys.add_screen(Box::new(screen::background::Background::new(
-        settings.clone(),
-        screen_sys.clone(),
-    )));
-    let mut accounts = screen::launcher::load_accounts().unwrap_or_default();
-    if let Some((name, uuid, token)) = opt
-        .name
-        .clone()
-        .and_then(|name| {
-            opt.uuid
-                .clone()
-                .map(|uuid| opt.token.clone().map(|token| (name, uuid, token)))
-        })
-        .flatten()
-    {
-        println!("Got microsoft credentials, adding account...");
-        accounts.push(Account {
-            name: name.clone(),
-            uuid: Some(uuid),
-            verification_tokens: vec![name, "".to_string(), token],
-            head_img_data: None,
-            account_type: AccountType::Microsoft,
-        });
-    }
-    screen_sys.add_screen(Box::new(screen::launcher::Launcher::new(
-        Arc::new(Mutex::new(accounts)),
-        screen_sys.clone(),
-        active_account.clone(),
-    )));
-
-    let textures = renderer.get_textures();
-
-    #[cfg(target_os = "linux")]
-    let clipboard: Box<dyn ClipboardProvider> = match events_loop.display_handle() {
-        Ok(display) => {
-            match display.as_raw() {
+        #[cfg(target_os = "linux")]
+        let clipboard: Box<dyn ClipboardProvider> = match event_loop.display_handle() {
+            Ok(display) => match display.as_raw() {
                 RawDisplayHandle::Wayland(wayland) => {
                     debug!("Configured with wayland clipboard");
                     // NOTE: Since this takes a pointer to the winit event loop, it MUST be dropped first.
@@ -477,105 +474,218 @@ fn main() {
                     }
                 }
                 _ => create_clipboard(),
-            }
+            },
+            Err(_) => create_clipboard(),
+        };
+
+        #[cfg(not(target_os = "linux"))]
+        let clipboard = create_clipboard();
+
+        let game = Game {
+            server: ArcSwapOption::empty(),
+            focused: AtomicBool::new(false),
+            renderer: Arc::new(renderer),
+            screen_sys,
+            resource_manager: self.resource_manager.clone(),
+            console: self.con.clone(),
+            should_close: AtomicBool::new(false),
+            chunk_builder: Mutex::new(chunk_builder::ChunkBuilder::new(
+                self.resource_manager.clone(),
+                textures,
+            )),
+            connect_error: ArcSwapOption::empty(),
+            last_mouse_x: AtomicF64::new(0.0),
+            last_mouse_y: AtomicF64::new(0.0),
+            last_mouse_xrel: AtomicF64::new(0.0),
+            last_mouse_yrel: AtomicF64::new(0.0),
+            shift_pressed: AtomicBool::new(false),
+            ctrl_pressed: AtomicBool::new(false),
+            logo_pressed: AtomicBool::new(false),
+            fullscreen: AtomicBool::new(false),
+            clipboard_provider: Mutex::new(clipboard),
+            current_account: active_account,
+            settings: self.settings.clone(),
+            keybinds: self.keybinds.clone(),
+        };
+
+        if self.opt.network_debug {
+            protocol::enable_network_debug();
         }
-        Err(_) => create_clipboard(),
-    };
 
-    #[cfg(not(target_os = "linux"))]
-    let clipboard = create_clipboard();
+        if let Some(ref filename) = self.opt.network_parse_packet.clone() {
+            let data = fs::read(filename).unwrap();
+            protocol::try_parse_packet(
+                data,
+                game.settings.get_int(IntSetting::DefaultProtocolVersion),
+            );
+            // Signal close so the event loop exits cleanly
+            game.set_should_close();
+        }
 
-    let game = Game {
-        server: ArcSwapOption::empty(),
-        focused: AtomicBool::new(false),
-        renderer: Arc::new(renderer),
-        screen_sys,
-        resource_manager: resource_manager.clone(),
-        console: con,
-        should_close: AtomicBool::new(false),
-        chunk_builder: Mutex::new(chunk_builder::ChunkBuilder::new(resource_manager, textures)),
-        connect_error: ArcSwapOption::empty(),
-        last_mouse_x: AtomicF64::new(0.0),
-        last_mouse_y: AtomicF64::new(0.0),
-        last_mouse_xrel: AtomicF64::new(0.0),
-        last_mouse_yrel: AtomicF64::new(0.0),
-        shift_pressed: AtomicBool::new(false),
-        ctrl_pressed: AtomicBool::new(false),
-        logo_pressed: AtomicBool::new(false),
-        fullscreen: AtomicBool::new(false),
-        clipboard_provider: Mutex::new(clipboard),
-        current_account: active_account,
-        settings,
-        keybinds,
-    };
-    if opt.network_debug {
-        protocol::enable_network_debug();
+        #[cfg(feature = "wgpu-mc")]
+        {
+            self.wgpu_bridge = Some(render::wgpu_mc::WgpuMcBridge::new(
+                window.clone(),
+                self.vsync,
+                self.resource_manager.clone(),
+            ));
+        }
+
+        self.window = Some(window);
+        self.gl_surface = Some(gl_surface);
+        self.gl_context = Some(gl_context);
+        self.game = Some(Rc::new(RefCell::new(game)));
+        self.ui_container = Some(Rc::new(RefCell::new(ui_container)));
     }
 
-    if let Some(filename) = opt.network_parse_packet {
-        let data = fs::read(filename).unwrap();
-        protocol::try_parse_packet(
-            data,
-            game.settings.get_int(IntSetting::DefaultProtocolVersion),
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
+
+        let (Some(window), Some(game_rc), Some(ui_rc), Some(gl_surface), Some(gl_context)) = (
+            self.window.as_deref(),
+            self.game.as_ref(),
+            self.ui_container.as_ref(),
+            self.gl_surface.as_ref(),
+            self.gl_context.as_ref(),
+        ) else {
+            return;
+        };
+
+        let game = game_rc.borrow();
+        let mut ui_container = ui_rc.borrow_mut();
+
+        let start = Instant::now();
+        tick_all(
+            window,
+            &game,
+            &mut ui_container,
+            &mut self.last_frame,
+            &mut self.resui,
+            &mut self.last_resource_version,
+            self.vsync,
         );
-        return;
+        if DEBUG {
+            let dist = Instant::now().checked_duration_since(start);
+            debug!("Ticking took {}", dist.unwrap().as_millis());
+        }
+        gl_surface
+            .swap_buffers(gl_context)
+            .expect("Failed to swap GL buffers");
+
+        if game.should_close() {
+            event_loop.exit();
+        }
     }
 
-    let mut last_resource_version = 0;
+    fn window_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        let (Some(window), Some(game_rc), Some(ui_rc), Some(gl_surface), Some(gl_context)) = (
+            self.window.as_deref(),
+            self.game.as_ref(),
+            self.ui_container.as_ref(),
+            self.gl_surface.as_ref(),
+            self.gl_context.as_ref(),
+        ) else {
+            return;
+        };
 
-    let game = Rc::new(RefCell::new(game));
-    let ui_container = Rc::new(RefCell::new(ui_container));
-
-    let game = Rc::clone(&game);
-    let ui_container = Rc::clone(&ui_container);
-    events_loop
-        .run(move |event, event_loop| {
-            let game = game.borrow();
-            let mut ui_container = ui_container.borrow_mut();
-            event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
-
-            if let winit::event::Event::WindowEvent {
-                event: winit::event::WindowEvent::Resized(physical_size),
-                ..
-            } = event
-            {
-                if physical_size.width == 0 || physical_size.height == 0 {
-                    return;
-                }
-                surface.resize(
-                    &context,
-                    NonZeroU32::new(physical_size.width).unwrap(),
-                    NonZeroU32::new(physical_size.height).unwrap(),
-                );
-            }
-
-            if !handle_window_event(&window, &game, &mut ui_container, event) {
+        if let WindowEvent::Resized(physical_size) = event {
+            if physical_size.width == 0 || physical_size.height == 0 {
                 return;
             }
-
-            let start = Instant::now();
-            tick_all(
-                &window,
-                &game,
-                &mut ui_container,
-                &mut last_frame,
-                &mut resui,
-                &mut last_resource_version,
-                vsync,
+            gl_surface.resize(
+                gl_context,
+                NonZeroU32::new(physical_size.width).unwrap(),
+                NonZeroU32::new(physical_size.height).unwrap(),
             );
-            if DEBUG {
-                let dist = Instant::now().checked_duration_since(start);
-                debug!("Ticking took {}", dist.unwrap().as_millis());
+            #[cfg(feature = "wgpu-mc")]
+            if let Some(bridge) = &self.wgpu_bridge {
+                bridge.resize(physical_size.width, physical_size.height);
             }
-            surface
-                .swap_buffers(&context)
-                .expect("Failed to swap GL buffers");
+            return;
+        }
 
-            if game.should_close() {
-                event_loop.exit();
-            }
-        })
-        .unwrap();
+        let game = game_rc.borrow();
+        let mut ui_container = ui_rc.borrow_mut();
+        handle_window_event(window, &game, &mut ui_container, event);
+    }
+
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: DeviceId,
+        event: DeviceEvent,
+    ) {
+        let Some(game_rc) = self.game.as_ref() else {
+            return;
+        };
+        let game = game_rc.borrow();
+
+        if let DeviceEvent::MouseMotion {
+            delta: (xrel, yrel),
+        } = event
+        {
+            handle_mouse_motion(&game, xrel, yrel);
+        }
+    }
+}
+
+// TODO: Improve perf of 3, 6 and 10
+// TODO: Reenable: [server/mod.rs:1924][WARN] Block entity at (1371,53,-484) missing id tag: NamedTag("", Compound({"y": Int(53), "Sign": String(""), "x": Int(1371), "z": Int(-484)}))
+
+fn main() {
+    let opt = Opt::from_args();
+    #[allow(clippy::arc_with_non_send_sync)]
+    let con = Arc::new(Mutex::new(console::Console::new()));
+    let proxy = console::ConsoleProxy::new(con.clone());
+
+    log::set_boxed_logger(Box::new(proxy)).unwrap();
+    log::set_max_level(log::LevelFilter::Trace);
+
+    info!("Starting Leafish...");
+
+    let settings = Arc::new(SettingStore::new());
+    let keybinds = Arc::new(KeybindStore::new());
+    info!("settings all loaded!");
+
+    con.lock().configure(&settings);
+    let vsync = settings.get_bool(BoolSetting::Vsync);
+
+    let (res, resui) = resources::Manager::new(
+        opt.assets_dir
+            .clone()
+            .zip(opt.asset_index.clone())
+            .map(|(dir, idx)| format!("{}/indexes/{}.json", dir, idx)),
+        opt.client_jar.clone(),
+    );
+    let resource_manager = Arc::new(RwLock::new(res));
+
+    let events_loop = winit::event_loop::EventLoop::new().unwrap();
+
+    let mut app = LeafishApp {
+        opt,
+        con,
+        settings,
+        keybinds,
+        resource_manager,
+        resui,
+        vsync,
+        window: None,
+        gl_surface: None,
+        gl_context: None,
+        game: None,
+        ui_container: None,
+        last_frame: Instant::now(),
+        last_resource_version: 0,
+        #[cfg(feature = "wgpu-mc")]
+        wgpu_bridge: None,
+    };
+
+    events_loop.run_app(&mut app).unwrap();
 }
 
 const DEBUG: bool = false;
@@ -709,200 +819,178 @@ fn tick_all(
         }
     }
 }
-// TODO: Improve perf of 3, 6 and 10
-// TODO: Reenable: [server/mod.rs:1924][WARN] Block entity at (1371,53,-484) missing id tag: NamedTag("", Compound({"y": Int(53), "Sign": String(""), "x": Int(1371), "z": Int(-484)}))
 
-fn handle_window_event<T>(
+fn handle_mouse_motion(game: &Game, xrel: f64, yrel: f64) {
+    let mouse_sens: f64 = game.settings.get_float(FloatSetting::MouseSense);
+    let (rx, ry) = if xrel > 1000.0 || yrel > 1000.0 {
+        // Heuristic for if we were passed an absolute value instead of relative
+        // Workaround https://github.com/tomaka/glutin/issues/1084 MouseMotion event returns absolute instead of relative values, when running Linux in a VM
+        // Note SDL2 had a hint to handle this scenario:
+        // sdl2::hint::set_with_priority("SDL_MOUSE_RELATIVE_MODE_WARP", "1", &sdl2::hint::Hint::Override);
+        let s = 8000.0 + 0.01;
+        (
+            ((xrel - game.get_last_mouse_xrel()) / s) * mouse_sens,
+            ((yrel - game.get_last_mouse_yrel()) / s) * mouse_sens,
+        )
+    } else {
+        let s = 2000.0 + 0.01;
+        ((xrel / s) * mouse_sens, (yrel / s) * mouse_sens)
+    };
+
+    game.set_last_mouse_xrel(xrel);
+    game.set_last_mouse_yrel(yrel);
+
+    use std::f64::consts::PI;
+
+    if game.is_focused() {
+        if let Some(server) = game.server.load().as_ref() {
+            if !server.dead.load(Ordering::Acquire) {
+                if let Some(player) = server.player.load().as_ref() {
+                    let mut entities = server.entities.write();
+                    let mut player = entities.world.entity_mut(player.1);
+                    let mut rotation = player.get_mut::<Rotation>().unwrap();
+                    rotation.yaw -= rx;
+                    rotation.pitch -= ry;
+                    if rotation.pitch < (PI / 2.0) + 0.01 {
+                        rotation.pitch = (PI / 2.0) + 0.01;
+                    }
+                    if rotation.pitch > (PI / 2.0) * 3.0 - 0.01 {
+                        rotation.pitch = (PI / 2.0) * 3.0 - 0.01;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn handle_window_event(
     window: &winit::window::Window,
     game: &Game,
     ui_container: &mut ui::Container,
-    event: winit::event::Event<T>,
-) -> bool {
+    event: WindowEvent,
+) {
     use winit::event::*;
     let dpi_factor = window.scale_factor();
     match event {
-        Event::AboutToWait => return true,
-        Event::DeviceEvent {
-            event: DeviceEvent::MouseMotion {
-                delta: (xrel, yrel),
-            },
-            ..
-        } => {
-            let mouse_sens: f64 = game.settings.get_float(FloatSetting::MouseSense);
-            let (rx, ry) = if xrel > 1000.0 || yrel > 1000.0 {
-                // Heuristic for if we were passed an absolute value instead of relative
-                // Workaround https://github.com/tomaka/glutin/issues/1084 MouseMotion event returns absolute instead of relative values, when running Linux in a VM
-                // Note SDL2 had a hint to handle this scenario:
-                // sdl2::hint::set_with_priority("SDL_MOUSE_RELATIVE_MODE_WARP", "1", &sdl2::hint::Hint::Override);
-                let s = 8000.0 + 0.01;
-                (
-                    ((xrel - game.get_last_mouse_xrel()) / s) * mouse_sens,
-                    ((yrel - game.get_last_mouse_yrel()) / s) * mouse_sens,
-                )
-            } else {
-                let s = 2000.0 + 0.01;
-                ((xrel / s) * mouse_sens, (yrel / s) * mouse_sens)
-            };
-
-            game.set_last_mouse_xrel(xrel);
-            game.set_last_mouse_yrel(yrel);
-
-            use std::f64::consts::PI;
-
-            if game.is_focused() {
+        WindowEvent::ModifiersChanged(modifiers_state) => {
+            game.set_ctrl_pressed(
+                modifiers_state.state() & ModifiersState::CONTROL != ModifiersState::empty(),
+            );
+            game.set_logo_pressed(
+                modifiers_state.state() & ModifiersState::SUPER != ModifiersState::empty(),
+            );
+            game.set_shift_pressed(
+                modifiers_state.state() & ModifiersState::SHIFT != ModifiersState::empty(),
+            );
+        }
+        WindowEvent::CloseRequested => game.set_should_close(),
+        WindowEvent::MouseInput { state, button, .. } => match (state, button) {
+            (ElementState::Released, MouseButton::Left) => {
+                let physical_size = window.inner_size();
+                let (width, height) = physical_size.to_logical::<f64>(dpi_factor).into();
+                if !game.screen_sys.is_current_ingame() && !game.is_focused() {
+                    // TODO: after Pointer Lock https://github.com/rust-windowing/winit/issues/1674
+                    ui_container.click_at(
+                        game,
+                        game.get_last_mouse_x(),
+                        game.get_last_mouse_y(),
+                        width,
+                        height,
+                    );
+                }
                 if let Some(server) = game.server.load().as_ref() {
-                    if !server.dead.load(Ordering::Acquire) {
-                        if let Some(player) = server.player.load().as_ref() {
-                            let mut entities = server.entities.write();
-                            let mut player = entities.world.entity_mut(player.1);
-                            let mut rotation = player.get_mut::<Rotation>().unwrap();
-                            rotation.yaw -= rx;
-                            rotation.pitch -= ry;
-                            if rotation.pitch < (PI / 2.0) + 0.01 {
-                                rotation.pitch = (PI / 2.0) + 0.01;
+                    server.on_release_left_click(game.is_focused());
+                }
+            }
+            (ElementState::Pressed, MouseButton::Left) => {
+                if let Some(server) = game.server.load().as_ref() {
+                    server.on_left_click(game.is_focused(), game.is_shift_pressed());
+                }
+            }
+            (ElementState::Released, MouseButton::Right) => {
+                if let Some(server) = game.server.load().as_ref() {
+                    server.on_release_right_click(game.is_focused());
+                }
+            }
+            (ElementState::Pressed, MouseButton::Right) => {
+                if let Some(server) = game.server.load().as_ref() {
+                    server.on_right_click(game.is_focused(), game.is_shift_pressed());
+                }
+            }
+            (_, _) => (),
+        },
+        WindowEvent::CursorMoved { position, .. } => {
+            let (x, y) = position.to_logical::<f64>(dpi_factor).into();
+            game.set_last_mouse_x(x);
+            game.set_last_mouse_y(y);
+
+            if !game.is_focused() {
+                let physical_size = window.inner_size();
+                let (width, height) = physical_size.to_logical::<f64>(dpi_factor).into();
+                ui_container.hover_at(game, x, y, width, height);
+                if let Some(server) = game.server.load().as_ref() {
+                    server.on_cursor_moved(x, y);
+                }
+            }
+        }
+        WindowEvent::MouseWheel { delta, .. } => {
+            // TODO: line vs pixel delta? does pixel scrolling (e.g. touchpad) need scaling?
+            match delta {
+                MouseScrollDelta::LineDelta(x, y) => {
+                    game.screen_sys.on_scroll(x.into(), y.into());
+                }
+                MouseScrollDelta::PixelDelta(position) => {
+                    let (x, y) = position.into();
+                    game.screen_sys.on_scroll(x, y);
+                }
+            }
+        }
+        WindowEvent::KeyboardInput { event, .. } => {
+            const SEMICOLON: Key = Key::Character(SmolStr::new_inline(";"));
+            if event.state == ElementState::Pressed && event.logical_key == SEMICOLON {
+                game.console.lock().toggle();
+            } else {
+                match (event.state, event.logical_key) {
+                    (ElementState::Pressed, Key::Named(NamedKey::F11)) => {
+                        if !event.repeat {
+                            if !game.is_fullscreen() {
+                                // TODO: support options for exclusive and simple fullscreen
+                                // see https://docs.rs/glutin/0.22.0-alpha5/glutin/window/struct.Window.html#method.set_fullscreen
+                                window.set_fullscreen(Some(
+                                    winit::window::Fullscreen::Borderless(
+                                        window.current_monitor(),
+                                    ),
+                                ));
+                            } else {
+                                window.set_fullscreen(None);
                             }
-                            if rotation.pitch > (PI / 2.0) * 3.0 - 0.01 {
-                                rotation.pitch = (PI / 2.0) * 3.0 - 0.01;
-                            }
+
+                            game.set_full_screen(!game.is_fullscreen());
                         }
+                    }
+                    (state, key) => {
+                        let pressed = state == ElementState::Pressed;
+                        #[cfg(target_os = "macos")]
+                        if pressed && game.is_logo_pressed() && key.eq_ignore_case('q') {
+                            game.set_should_close();
+                        }
+                        if !game.is_focused() {
+                            let ctrl_pressed =
+                                game.is_ctrl_pressed() || (pressed && game.is_logo_pressed());
+                            ui_container.key_press(game, key.clone(), pressed, ctrl_pressed);
+                        }
+                        game.screen_sys.clone().press_key(
+                            (key, event.physical_key),
+                            pressed,
+                            event.repeat,
+                            game,
+                        );
                     }
                 }
             }
         }
-
-        Event::WindowEvent { event, .. } => {
-            match event {
-                WindowEvent::ModifiersChanged(modifiers_state) => {
-                    game.set_ctrl_pressed(
-                        modifiers_state.state() & ModifiersState::CONTROL
-                            != ModifiersState::empty(),
-                    );
-                    game.set_logo_pressed(
-                        modifiers_state.state() & ModifiersState::SUPER != ModifiersState::empty(),
-                    );
-                    game.set_shift_pressed(
-                        modifiers_state.state() & ModifiersState::SHIFT != ModifiersState::empty(),
-                    );
-                }
-                WindowEvent::CloseRequested => game.set_should_close(),
-                WindowEvent::MouseInput { state, button, .. } => match (state, button) {
-                    (ElementState::Released, MouseButton::Left) => {
-                        let physical_size = window.inner_size();
-                        let (width, height) = physical_size.to_logical::<f64>(dpi_factor).into();
-                        if !game.screen_sys.is_current_ingame() && !game.is_focused() {
-                            // TODO: after Pointer Lock https://github.com/rust-windowing/winit/issues/1674
-                            ui_container.click_at(
-                                game,
-                                game.get_last_mouse_x(),
-                                game.get_last_mouse_y(),
-                                width,
-                                height,
-                            );
-                        }
-                        if let Some(server) = game.server.load().as_ref() {
-                            server.on_release_left_click(game.is_focused());
-                        }
-                    }
-                    (ElementState::Pressed, MouseButton::Left) => {
-                        if let Some(server) = game.server.load().as_ref() {
-                            server.on_left_click(game.is_focused(), game.is_shift_pressed());
-                        }
-                    }
-                    (ElementState::Released, MouseButton::Right) => {
-                        if let Some(server) = game.server.load().as_ref() {
-                            server.on_release_right_click(game.is_focused());
-                        }
-                    }
-                    (ElementState::Pressed, MouseButton::Right) => {
-                        if let Some(server) = game.server.load().as_ref() {
-                            server.on_right_click(game.is_focused(), game.is_shift_pressed());
-                        }
-                    }
-                    (_, _) => (),
-                },
-                WindowEvent::CursorMoved { position, .. } => {
-                    let (x, y) = position.to_logical::<f64>(dpi_factor).into();
-                    game.set_last_mouse_x(x);
-                    game.set_last_mouse_y(y);
-
-                    if !game.is_focused() {
-                        let physical_size = window.inner_size();
-                        let (width, height) = physical_size.to_logical::<f64>(dpi_factor).into();
-                        ui_container.hover_at(game, x, y, width, height);
-                        if let Some(server) = game.server.load().as_ref() {
-                            server.on_cursor_moved(x, y);
-                        }
-                    }
-                }
-                WindowEvent::MouseWheel { delta, .. } => {
-                    // TODO: line vs pixel delta? does pixel scrolling (e.g. touchpad) need scaling?
-                    match delta {
-                        MouseScrollDelta::LineDelta(x, y) => {
-                            game.screen_sys.on_scroll(x.into(), y.into());
-                        }
-                        MouseScrollDelta::PixelDelta(position) => {
-                            let (x, y) = position.into();
-                            game.screen_sys.on_scroll(x, y);
-                        }
-                    }
-                }
-                WindowEvent::KeyboardInput { event, .. } => {
-                    const SEMICOLON: Key = Key::Character(SmolStr::new_inline(";"));
-                    if event.state == ElementState::Pressed && event.logical_key == SEMICOLON {
-                        game.console.lock().toggle();
-                    } else {
-                        match (event.state, event.logical_key) {
-                            (ElementState::Pressed, Key::Named(NamedKey::F11)) => {
-                                if !event.repeat {
-                                    if !game.is_fullscreen() {
-                                        // TODO: support options for exclusive and simple fullscreen
-                                        // see https://docs.rs/glutin/0.22.0-alpha5/glutin/window/struct.Window.html#method.set_fullscreen
-                                        window.set_fullscreen(Some(
-                                            winit::window::Fullscreen::Borderless(
-                                                window.current_monitor(),
-                                            ),
-                                        ));
-                                    } else {
-                                        window.set_fullscreen(None);
-                                    }
-
-                                    game.set_full_screen(!game.is_fullscreen());
-                                }
-                            }
-                            (state, key) => {
-                                let pressed = state == ElementState::Pressed;
-                                #[cfg(target_os = "macos")]
-                                if pressed && game.is_logo_pressed() && key.eq_ignore_case('q') {
-                                    game.set_should_close();
-                                }
-                                if !game.is_focused() {
-                                    let ctrl_pressed = game.is_ctrl_pressed()
-                                        || (pressed && game.is_logo_pressed());
-                                    ui_container.key_press(
-                                        game,
-                                        key.clone(),
-                                        pressed,
-                                        ctrl_pressed,
-                                    );
-                                }
-                                game.screen_sys.clone().press_key(
-                                    (key, event.physical_key),
-                                    pressed,
-                                    event.repeat,
-                                    game,
-                                );
-                            }
-                        }
-                    }
-                }
-                _ => (),
-            }
-        }
-
         _ => (),
     }
-
-    false
 }
 
 fn create_clipboard() -> Box<dyn ClipboardProvider> {
