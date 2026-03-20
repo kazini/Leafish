@@ -9,8 +9,9 @@ use crate::protocol::mapped_packet::login::serverbound::{
 use crate::protocol::mapped_packet::play::clientbound::{
     AcknowledgePlayerDigging, Advancements, Animation, BlockAction, BlockBreakAnimation,
     BlockChange, BossBar, Camera, ChangeGameState, ChunkData, ChunkDataBulk, ChunkDataBulk_17,
-    ChunkData_17, ChunkData_Biomes3D, ChunkData_Biomes3D_bool, ChunkData_Biomes3D_i32,
-    ChunkData_HeightMap, ChunkData_NoEntities, ChunkData_NoEntities_u16, ChunkUnload,
+    ChunkData_17, ChunkData_1_20, ChunkData_Biomes3D, ChunkData_Biomes3D_bool,
+    ChunkData_Biomes3D_i32, ChunkData_HeightMap, ChunkData_NoEntities, ChunkData_NoEntities_u16,
+    ChunkUnload,
     CoFHLib_SendUUID, CollectItem, CombatEvent, ConfirmTransaction, CraftRecipeResponse,
     DeclareCommands, DeclareRecipes, Disconnect, Effect, Entity, EntityAction, EntityAttach,
     EntityDestroy, EntityEffect, EntityEquipment_Array, EntityEquipment_Single, EntityHeadLook,
@@ -680,6 +681,13 @@ state_mapped_packets!(
             }
             /// ChunkData sends or updates a single chunk on the client. If New is set
             /// then biome data should be sent too.
+            packet ChunkData_1_20 {
+                field chunk_x: i32,
+                field chunk_z: i32,
+                field heightmaps: NetworkNBT,
+                field data: Vec<u8>,
+                field block_entities: Vec<packet::PackedBlockEntity>,
+            }
             packet ChunkData_Biomes3D_i32 {
                 field chunk_x: i32,
                 field chunk_z: i32,
@@ -1638,6 +1646,15 @@ impl MappablePacket for packet::Packet {
                     chunk_z: chunk_data.chunk_z,
                     new: chunk_data.new,
                     bitmask: chunk_data.bitmask.0,
+                    heightmaps: chunk_data.heightmaps,
+                    data: chunk_data.data.data,
+                    block_entities: chunk_data.block_entities.data,
+                })
+            }
+            packet::Packet::ChunkData_1_20(chunk_data) => {
+                mapped_packet::MappedPacket::ChunkData_1_20(ChunkData_1_20 {
+                    chunk_x: chunk_data.chunk_x,
+                    chunk_z: chunk_data.chunk_z,
                     heightmaps: chunk_data.heightmaps,
                     data: chunk_data.data.data,
                     block_entities: chunk_data.block_entities.data,

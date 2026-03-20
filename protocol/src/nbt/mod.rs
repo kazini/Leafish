@@ -159,7 +159,7 @@ impl Tag {
         }
     }
 
-    fn internal_id(&self) -> u8 {
+    pub fn internal_id(&self) -> u8 {
         match *self {
             Tag::End => 0,
             Tag::Byte(_) => 1,
@@ -177,7 +177,7 @@ impl Tag {
         }
     }
 
-    fn read_type<R: io::Read>(id: u8, buf: &mut R) -> Result<Tag, protocol::Error> {
+    pub fn read_type<R: io::Read>(id: u8, buf: &mut R) -> Result<Tag, protocol::Error> {
         match id {
             0 => unreachable!(),
             1 => Ok(Tag::Byte(buf.read_i8()?)),
@@ -301,6 +301,7 @@ pub fn read_string<R: io::Read>(buf: &mut R) -> Result<String, protocol::Error> 
     let len: i16 = buf.read_i16::<BigEndian>()?;
     let mut bytes = Vec::<u8>::new();
     buf.take(len as u64).read_to_end(&mut bytes)?;
-    let ret = String::from_utf8(bytes).unwrap();
+    let ret = String::from_utf8(bytes)
+        .map_err(|e| protocol::Error::Err(format!("invalid UTF-8 in NBT string: {}", e)))?;
     Ok(ret)
 }

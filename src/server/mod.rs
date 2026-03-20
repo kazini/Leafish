@@ -523,6 +523,12 @@ impl Server {
                             MappedPacket::UpdateBlockEntity(block_update) => {
                                 server.on_block_entity_update(block_update);
                             }
+                            MappedPacket::ChunkData_1_20(chunk_data) => {
+                                let sky_light = server.world.dimension.load().has_sky_light();
+                                threads.spawn(move || {
+                                    server.on_chunk_data_1_20(chunk_data, sky_light);
+                                });
+                            }
                             MappedPacket::ChunkData_Biomes3D(chunk_data) => {
                                 let sky_light = server.world.dimension.load().has_sky_light();
                                 threads.spawn(move || {
@@ -2428,6 +2434,21 @@ impl Server {
                 );*/
             }
         }
+    }
+
+    fn on_chunk_data_1_20(
+        &self,
+        chunk_data: mapped_packet::play::clientbound::ChunkData_1_20,
+        sky_light: bool,
+    ) {
+        self.world
+            .load_chunk_1_20(
+                chunk_data.chunk_x,
+                chunk_data.chunk_z,
+                sky_light,
+                chunk_data.data,
+            )
+            .unwrap();
     }
 
     fn on_chunk_data_biomes3d_varint(

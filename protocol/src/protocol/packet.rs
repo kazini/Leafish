@@ -1060,6 +1060,14 @@ state_packets!(
             packet KeepAliveClientbound_i32 {
                 field id: i32 =,
             }
+            /// ChunkData for 1.20+ (no bitmask, no separate biomes, packed block entities)
+            packet ChunkData_1_20 {
+                field chunk_x: i32 =,
+                field chunk_z: i32 =,
+                field heightmaps: NetworkNBT =,
+                field data: LenPrefixedBytes<VarInt> =,
+                field block_entities: LenPrefixed<VarInt, packet::PackedBlockEntity> =,
+            }
             /// ChunkData sends or updates a single chunk on the client. If New is set
             /// then biome data should be sent too.
             packet ChunkData_Biomes3D_VarInt {
@@ -2411,6 +2419,32 @@ impl Serializable for LoginProperty {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct PackedBlockEntity {
+    pub packed_xz: u8,
+    pub y: i16,
+    pub block_entity_type: VarInt,
+    pub nbt: Option<nbt::NamedTag>,
+}
+
+impl Serializable for PackedBlockEntity {
+    fn read_from<R: io::Read>(buf: &mut R) -> Result<Self, Error> {
+        Ok(PackedBlockEntity {
+            packed_xz: Serializable::read_from(buf)?,
+            y: Serializable::read_from(buf)?,
+            block_entity_type: Serializable::read_from(buf)?,
+            nbt: Serializable::read_from(buf)?,
+        })
+    }
+
+    fn write_to<W: io::Write>(&self, buf: &mut W) -> Result<(), Error> {
+        self.packed_xz.write_to(buf)?;
+        self.y.write_to(buf)?;
+        self.block_entity_type.write_to(buf)?;
+        self.nbt.write_to(buf)
+    }
+}
+
 impl Serializable for SpawnProperty {
     fn read_from<R: io::Read>(buf: &mut R) -> Result<Self, Error> {
         Ok(SpawnProperty {
@@ -3414,7 +3448,9 @@ impl Serializable for CommandNode {
                 "forge:enum" => CommandProperty::ForgeEnum {
                     cls: Serializable::read_from(buf)?,
                 },
-                _ => panic!("unsupported command node parser {}", parse),
+                other => {
+                    return Err(Error::Err(format!("unsupported command node parser {}", other)));
+                }
             })
         } else {
             None

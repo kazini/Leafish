@@ -1384,6 +1384,149 @@ impl World {
         self.load_chunk19_or_115(false, x, z, new, sky_light, mask, data)
     }
 
+    /// Load a chunk in 1.20+ format: no bitmask, all sections present,
+    /// biomes embedded per-section, single-value palette support.
+    pub fn load_chunk_1_20(
+        &self,
+        x: i32,
+        z: i32,
+        skylight: bool,
+        data: Vec<u8>,
+    ) -> Result<(), protocol::Error> {
+        use leafish_protocol::protocol::LenPrefixed;
+        use leafish_protocol::types::bit;
+
+        let cpos = CPos(x, z);
+        let mut cursor = Cursor::new(data);
+        let mut chunk = Chunk::new(cpos);
+
+        // 1.20.4 sends 24 sections (-64 to 319). Sections 0-3 are Y<0, 4-19 are Y 0-255.
+        // We only store sections 0-15 (Y 0-255), so offset by 4.
+        let total_sections = 24;
+        let y_offset = 4; // first 4 sections are below Y=0
+
+        for section_idx in 0..total_sections {
+            let chunk_section_idx = section_idx as i32 - y_offset as i32;
+
+            // Block count (i16) — not used for rendering but must be read
+            let _block_count = cursor.read_i16::<byteorder::BigEndian>()?;
+
+            // Parse block states PalettedContainer
+            let bits_per_entry = cursor.read_u8()?;
+
+            if chunk_section_idx >= 0 && chunk_section_idx < 16 {
+                let idx = chunk_section_idx as usize;
+                let fill_sky = skylight && chunk.sections.iter().skip(idx).all(|v| v.is_none());
+                chunk.sections[idx] = Some(ChunkSection::new(idx as u8, fill_sky));
+                let section = chunk.sections[idx].as_mut().unwrap();
+
+                if bits_per_entry == 0 {
+                    // Single-value palette: one VarInt block ID, empty data array
+                    let single_id = VarInt::read_from(&mut cursor)?.0;
+                    let data_len = VarInt::read_from(&mut cursor)?.0;
+                    for _ in 0..data_len {
+                        let _: u64 = Serializable::read_from(&mut cursor)?;
+                    }
+                    let bl = self.id_map.by_vanilla_id(
+                        single_id as usize,
+                        self.modded_block_ids.load().as_ref(),
+                    );
+                    for block_index in 0..4096 {
+                        section.blocks_mut().set(block_index, bl);
+                    }
+                } else {
+                    let actual_bits = if bits_per_entry < 4 { 4 } else { bits_per_entry };
+                    let mut mappings: BTreeMap<usize, block::Block> = BTreeMap::new();
+
+                    if actual_bits <= 8 {
+                        let count = VarInt::read_from(&mut cursor)?.0;
+                        for i in 0..count {
+                            let id = VarInt::read_from(&mut cursor)?.0;
+                            let bl = self.id_map.by_vanilla_id(
+                                id as usize,
+                                self.modded_block_ids.load().as_ref(),
+                            );
+                            mappings.insert(i as usize, bl);
+                        }
+                    }
+
+                    let bits = LenPrefixed::<VarInt, u64>::read_from(&mut cursor)?.data;
+                    let m = bit::Map::from_raw(bits, actual_bits as usize, true);
+
+                    for block_index in 0..4096 {
+                        let id = m.get(block_index);
+                        section.blocks_mut().set(
+                            block_index,
+                            mappings.get(&id).cloned().unwrap_or_else(|| {
+                                self.id_map.by_vanilla_id(
+                                    id,
+                                    self.modded_block_ids.load().as_ref(),
+                                )
+                            }),
+                        );
+                    }
+                }
+                section.dirty = true;
+            } else {
+                // Section outside Y 0-255: skip block states data
+                if bits_per_entry == 0 {
+                    let _single_id = VarInt::read_from(&mut cursor)?;
+                    let data_len = VarInt::read_from(&mut cursor)?.0;
+                    for _ in 0..data_len {
+                        let _: u64 = Serializable::read_from(&mut cursor)?;
+                    }
+                } else {
+                    let actual_bits = if bits_per_entry < 4 { 4 } else { bits_per_entry };
+                    if actual_bits <= 8 {
+                        let count = VarInt::read_from(&mut cursor)?.0;
+                        for _ in 0..count {
+                            let _ = VarInt::read_from(&mut cursor)?;
+                        }
+                    }
+                    let _bits = LenPrefixed::<VarInt, u64>::read_from(&mut cursor)?;
+                }
+            }
+
+            // Skip biomes PalettedContainer (same structure, 64 entries per section)
+            let biome_bits = cursor.read_u8()?;
+            if biome_bits == 0 {
+                let _single = VarInt::read_from(&mut cursor)?;
+                let data_len = VarInt::read_from(&mut cursor)?.0;
+                for _ in 0..data_len {
+                    let _: u64 = Serializable::read_from(&mut cursor)?;
+                }
+            } else {
+                let actual = if biome_bits < 1 { 1 } else { biome_bits };
+                if actual <= 3 {
+                    let count = VarInt::read_from(&mut cursor)?.0;
+                    for _ in 0..count {
+                        let _ = VarInt::read_from(&mut cursor)?;
+                    }
+                }
+                let _ = LenPrefixed::<VarInt, u64>::read_from(&mut cursor)?;
+            }
+        }
+
+        chunk.calculate_heightmap();
+        self.chunks.write().insert(cpos, chunk);
+
+        // Mark all sections dirty for rendering
+        for i in 0..16 {
+            self.flag_section_dirty(x, i, z);
+        }
+        // Also dirty neighboring chunks for proper face culling
+        for dx in -1..=1 {
+            for dz in -1..=1 {
+                if dx == 0 && dz == 0 { continue; }
+                for i in 0..16 {
+                    self.flag_section_dirty(x + dx, i, z + dz);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     #[allow(clippy::or_fun_call)]
     fn load_chunk19_or_115(
         &self,

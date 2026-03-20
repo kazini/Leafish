@@ -259,7 +259,7 @@ macro_rules! protocol_packet_ids {
                                         $(
                                             $id => $crate::protocol::packet::$state::$dir::internal_ids::$name,
                                         )*
-                                            _ => panic!("bad packet id 0x{:x} in {:?} {:?}", id, dir, state),
+                                            _ => -1, // unmapped packet, will be skipped
                                         }
                                     } else {
                                         match id {
@@ -316,6 +316,32 @@ impl Serializable for Option<nbt::NamedTag> {
             Some(ref val) => {
                 buf.write_u8(10)?;
                 nbt::write_string(buf, &val.0)?;
+                val.1.write_to(buf)?;
+            }
+            None => buf.write_u8(0)?,
+        }
+        Ok(())
+    }
+}
+
+/// NBT tag without root name, used in 1.20.2+ network protocol.
+#[derive(Debug, Clone, Default)]
+pub struct NetworkNBT(pub Option<nbt::NamedTag>);
+
+impl Serializable for NetworkNBT {
+    fn read_from<R: io::Read>(buf: &mut R) -> Result<NetworkNBT, Error> {
+        let ty = buf.read_u8()?;
+        if ty == 0 {
+            Ok(NetworkNBT(None))
+        } else {
+            let tag = nbt::Tag::read_type(ty, buf)?;
+            Ok(NetworkNBT(Some(nbt::NamedTag(String::new(), tag))))
+        }
+    }
+    fn write_to<W: io::Write>(&self, buf: &mut W) -> Result<(), Error> {
+        match &self.0 {
+            Some(val) => {
+                buf.write_u8(val.1.internal_id())?;
                 val.1.write_to(buf)?;
             }
             None => buf.write_u8(0)?,
@@ -1319,45 +1345,61 @@ impl Conn {
     }
 
     pub fn read_packet(&mut self) -> Result<packet::Packet, Error> {
-        let compression_threshold = self.compression_threshold;
-        let (id, mut buf) = Conn::read_raw_packet_from(self, compression_threshold)?;
+        loop {
+            let compression_threshold = self.compression_threshold;
+            let (id, mut buf) = Conn::read_raw_packet_from(self, compression_threshold)?;
 
-        let dir = match self.direction {
-            Direction::Clientbound => Direction::Serverbound,
-            Direction::Serverbound => Direction::Clientbound,
-        };
+            let dir = match self.direction {
+                Direction::Clientbound => Direction::Serverbound,
+                Direction::Serverbound => Direction::Clientbound,
+            };
 
-        if is_network_debug() {
-            debug!(
-                "about to parse id={:x}, dir={:?} state={:?}",
-                id, dir, self.state
-            );
-            fs::File::create("last-packet")?.write_all(buf.get_ref())?;
-        }
-
-        let packet = packet::packet_by_id(self.protocol_version, self.state, dir, id, &mut buf)?;
-
-        if is_network_debug() {
-            debug!("packet = {:?}", packet);
-        }
-
-        match packet {
-            Some(val) => {
-                let pos = buf.position() as usize;
-                let ibuf = buf.into_inner();
-                if ibuf.len() != pos {
-                    debug!("pos = {:?}", pos);
-                    debug!("ibuf = {:?}", ibuf);
-                    return Err(Error::Err(format!(
-                        "Failed to read all of packet 0x{:X}, \
-                                                           had {} bytes left",
-                        id,
-                        ibuf.len() - pos
-                    )));
-                }
-                Ok(val)
+            if is_network_debug() {
+                debug!(
+                    "about to parse id={:x}, dir={:?} state={:?}",
+                    id, dir, self.state
+                );
+                fs::File::create("last-packet")?.write_all(buf.get_ref())?;
             }
-            None => Err(Error::Err("missing packet".to_owned())),
+
+            let packet =
+                match packet::packet_by_id(self.protocol_version, self.state, dir, id, &mut buf) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        debug!("error parsing packet id=0x{:X}: {:?}, skipping", id, e);
+                        continue;
+                    }
+                };
+
+            if is_network_debug() {
+                debug!("packet = {:?}", packet);
+            }
+
+            match packet {
+                Some(val) => {
+                    let pos = buf.position() as usize;
+                    let ibuf = buf.into_inner();
+                    if ibuf.len() != pos {
+                        debug!("pos = {:?}", pos);
+                        debug!("ibuf = {:?}", ibuf);
+                        return Err(Error::Err(format!(
+                            "Failed to read all of packet 0x{:X}, \
+                                                               had {} bytes left",
+                            id,
+                            ibuf.len() - pos
+                        )));
+                    }
+                    return Ok(val);
+                }
+                None => {
+                    debug!(
+                        "skipping unmapped packet id=0x{:X}, {} bytes",
+                        id,
+                        buf.into_inner().len()
+                    );
+                    continue;
+                }
+            }
         }
     }
 

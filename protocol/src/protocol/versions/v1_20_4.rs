@@ -102,7 +102,7 @@ protocol_packet_ids!(
             // 0x22 => hurt_animation (no internal equivalent)
             // 0x23 => initialize_world_border (no internal equivalent)
             0x24 => KeepAliveClientbound_i64
-            0x25 => ChunkData_Biomes3D_VarInt
+            0x25 => ChunkData_1_20
             0x26 => Effect
             0x27 => Particle_f64
             0x28 => UpdateLight_WithTrust
@@ -125,7 +125,7 @@ protocol_packet_ids!(
             // 0x39 => enter_combat_event (no internal equivalent)
             0x3a => CombatEvent
             // 0x3b => player_remove (no internal equivalent)
-            0x3c => PlayerInfo
+            // 0x3c => PlayerInfo (1.20.4 uses PlayerInfoUpdate with bitmask actions, not compatible)
             0x3d => FacePlayer
             0x3e => TeleportPlayer_WithConfirm
             0x3f => UnlockRecipes_WithBlastSmoker
