@@ -1060,13 +1060,14 @@ state_packets!(
             packet KeepAliveClientbound_i32 {
                 field id: i32 =,
             }
-            /// ChunkData for 1.20+ (no bitmask, no separate biomes, packed block entities)
+            /// ChunkData for 1.20+ (combined with UpdateLight, no bitmask, no separate biomes)
             packet ChunkData_1_20 {
                 field chunk_x: i32 =,
                 field chunk_z: i32 =,
                 field heightmaps: NetworkNBT =,
                 field data: LenPrefixedBytes<VarInt> =,
                 field block_entities: LenPrefixed<VarInt, packet::PackedBlockEntity> =,
+                field light_data: Vec<u8> =,
             }
             /// ChunkData sends or updates a single chunk on the client. If New is set
             /// then biome data should be sent too.

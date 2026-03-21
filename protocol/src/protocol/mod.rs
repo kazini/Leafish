@@ -35,7 +35,7 @@ use flate2::read::{ZlibDecoder, ZlibEncoder};
 use flate2::Compression;
 use instant::{Duration, Instant};
 use lazy_static::lazy_static;
-use log::{debug, warn};
+use log::{debug, trace, warn};
 use num_traits::cast::{cast, NumCast};
 use serde::{Deserialize, Serialize};
 use trust_dns_resolver::config::ResolverConfig;
@@ -1366,7 +1366,7 @@ impl Conn {
                 match packet::packet_by_id(self.protocol_version, self.state, dir, id, &mut buf) {
                     Ok(p) => p,
                     Err(e) => {
-                        debug!("error parsing packet id=0x{:X}: {:?}, skipping", id, e);
+                        trace!("skipping unparseable packet id=0x{:X} state={:?}: {:?}", id, self.state, e);
                         continue;
                     }
                 };
@@ -1380,19 +1380,16 @@ impl Conn {
                     let pos = buf.position() as usize;
                     let ibuf = buf.into_inner();
                     if ibuf.len() != pos {
-                        debug!("pos = {:?}", pos);
-                        debug!("ibuf = {:?}", ibuf);
-                        return Err(Error::Err(format!(
-                            "Failed to read all of packet 0x{:X}, \
-                                                               had {} bytes left",
-                            id,
-                            ibuf.len() - pos
-                        )));
+                        trace!(
+                            "packet 0x{:X}: {} bytes unread, skipping",
+                            id, ibuf.len() - pos
+                        );
+                        continue;
                     }
                     return Ok(val);
                 }
                 None => {
-                    debug!(
+                    trace!(
                         "skipping unmapped packet id=0x{:X}, {} bytes",
                         id,
                         buf.into_inner().len()

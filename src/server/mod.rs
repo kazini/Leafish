@@ -2441,14 +2441,15 @@ impl Server {
         chunk_data: mapped_packet::play::clientbound::ChunkData_1_20,
         sky_light: bool,
     ) {
-        self.world
-            .load_chunk_1_20(
-                chunk_data.chunk_x,
-                chunk_data.chunk_z,
-                sky_light,
-                chunk_data.data,
-            )
-            .unwrap();
+        match self.world.load_chunk_1_20(
+            chunk_data.chunk_x,
+            chunk_data.chunk_z,
+            sky_light,
+            chunk_data.data,
+        ) {
+            Ok(()) => {}
+            Err(e) => log::error!("load_chunk_1_20 error: {:?}", e),
+        }
     }
 
     fn on_chunk_data_biomes3d_varint(
