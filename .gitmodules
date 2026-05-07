@@ -1,0 +1,3 @@
+[submodule "wgpu-mc"]
+	path = wgpu-mc
+	url = https://github.com/wgpu-mc/wgpu-mc
