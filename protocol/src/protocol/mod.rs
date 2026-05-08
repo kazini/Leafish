@@ -372,7 +372,7 @@ impl Serializable for String {
         debug_assert!(len <= 65536, "String length too big: {}", len);
         let mut bytes = Vec::<u8>::new();
         buf.take(len as u64).read_to_end(&mut bytes)?;
-        let ret = String::from_utf8(bytes).unwrap();
+        let ret = String::from_utf8(bytes).map_err(|e| Error::Err(format!("Invalid UTF-8 in string: {}", e)))?;
         Ok(ret)
     }
     fn write_to<W: io::Write>(&self, buf: &mut W) -> Result<(), Error> {
@@ -388,7 +388,7 @@ impl Serializable for format::Component {
         let len = VarInt::read_from(buf)?.0;
         let mut bytes = Vec::<u8>::new();
         buf.take(len as u64).read_to_end(&mut bytes)?;
-        let ret = String::from_utf8(bytes).unwrap();
+        let ret = String::from_utf8(bytes).map_err(|e| Error::Err(format!("Invalid UTF-8 in component: {}", e)))?;
         Ok(Self::from_str(&ret[..]))
     }
     fn write_to<W: io::Write>(&self, buf: &mut W) -> Result<(), Error> {

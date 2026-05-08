@@ -3041,6 +3041,8 @@ pub enum RecipeData {
         addition: RecipeIngredient,
         result: Option<item::Stack>,
     },
+    /// A recipe type not recognised by this client (recipe book is not implemented).
+    Unknown,
 }
 
 #[derive(Debug, Default)]
@@ -3154,7 +3156,11 @@ impl Serializable for Recipe {
                 addition: Serializable::read_from(buf)?,
                 result: Serializable::read_from(buf)?,
             },
-            _ => panic!("unrecognized recipe type: {}", ty),
+            _ => {
+                // Recipe book is not implemented; unknown types are silently ignored.
+                trace!("ignoring unrecognised recipe type: {}", ty);
+                RecipeData::Unknown
+            }
         };
 
         Ok(Recipe { id, ty, data })

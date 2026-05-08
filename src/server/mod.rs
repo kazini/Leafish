@@ -915,6 +915,7 @@ impl Server {
                                 )),
                             );
                         }
+                        break;
                     }
                 }
             }
