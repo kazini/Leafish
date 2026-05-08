@@ -278,6 +278,7 @@ pub struct Container {
     last_mode: Mode,
     version: usize,
 
+    pub ui_scale: f64,
     last_sw: f64,
     last_sh: f64,
     last_width: f64,
@@ -300,6 +301,7 @@ impl Container {
             last_mode: Mode::Scaled,
             version: 0xFFFF,
 
+            ui_scale: 1.0,
             last_sw: 0.0,
             last_sh: 0.0,
             last_width: 0.0,
@@ -309,7 +311,7 @@ impl Container {
 
     pub fn tick(&mut self, renderer: Arc<render::Renderer>, delta: f64, width: f64, height: f64) {
         let (sw, sh) = match self.mode {
-            Mode::Scaled => (SCALED_WIDTH / width, SCALED_HEIGHT / height),
+            Mode::Scaled => (SCALED_WIDTH / width * self.ui_scale, SCALED_HEIGHT / height * self.ui_scale),
             Mode::Unscaled(scale) => (scale, scale),
         };
 
@@ -361,7 +363,7 @@ impl Container {
 
     pub fn hover_at(&mut self, game: &Game, x: f64, y: f64, width: f64, height: f64) {
         let (sw, sh) = match self.mode {
-            Mode::Scaled => (SCALED_WIDTH / width, SCALED_HEIGHT / height),
+            Mode::Scaled => (SCALED_WIDTH / width * self.ui_scale, SCALED_HEIGHT / height * self.ui_scale),
             Mode::Unscaled(scale) => (scale, scale),
         };
         let mx = (x / width) * SCALED_WIDTH;
@@ -375,7 +377,7 @@ impl Container {
 
     pub fn click_at(&mut self, game: &Game, x: f64, y: f64, width: f64, height: f64) {
         let (sw, sh) = match self.mode {
-            Mode::Scaled => (SCALED_WIDTH / width, SCALED_HEIGHT / height),
+            Mode::Scaled => (SCALED_WIDTH / width * self.ui_scale, SCALED_HEIGHT / height * self.ui_scale),
             Mode::Unscaled(scale) => (scale, scale),
         };
         let mx = (x / width) * SCALED_WIDTH;
@@ -1238,33 +1240,55 @@ impl ElementHolder for FormatState {
 impl FormatState {
     fn build(&mut self, components: &format::Component, color: Option<format::Color>) {
         for component in components.list.iter() {
+            let modifier = component.get_modifier();
+            let resolved_color = if let Some(color) = color {
+                modifier.color.use_or_def(color)
+            } else {
+                modifier.color
+            };
             self.append_text(
                 self.scale_x,
                 self.scale_y,
                 component.get_text(),
-                if let Some(color) = color {
-                    component.get_modifier().color.use_or_def(color)
-                } else {
-                    component.get_modifier().color
-                },
+                resolved_color,
+                modifier,
             )
         }
     }
 
-    fn append_text(&mut self, scale_x: f64, scale_y: f64, txt: &str, color: format::Color) {
+    fn append_text(
+        &mut self,
+        scale_x: f64,
+        scale_y: f64,
+        txt: &str,
+        color: format::Color,
+        modifier: &format::Modifier,
+    ) {
+        // Bold slightly widens characters to match Minecraft's rendering
+        let effective_scale_x = if modifier.bold { scale_x * 1.08 } else { scale_x };
+        // Italic uses a small clockwise rotation
+        let rotation = if modifier.italic { 0.2 } else { 0.0 };
+
         let mut width = 0.0;
         let mut last = 0;
         for (i, c) in txt.char_indices() {
             let size = self.renderer.ui.lock().size_of_char(c) + 2.0;
             if (self.max_width > 0.0 && self.offset + width + size > self.max_width) || c == '\n' {
                 let (rr, gg, bb) = color.to_rgb();
+                let alpha = (self.transparency * 255_f64) as u8;
+                let run_width = self.renderer.ui.lock().size_of_string(&txt[last..i]);
                 TextBuilder::new()
                     .text(&txt[last..i])
                     .position(self.offset, (self.lines * 18 + 1) as f64)
-                    .colour((rr, gg, bb, (self.transparency * 255_f64) as u8))
-                    .scale_x(scale_x)
+                    .colour((rr, gg, bb, alpha))
+                    .scale_x(effective_scale_x)
                     .scale_y(scale_y)
+                    .rotation(rotation)
                     .create(self);
+                self.add_decorations(
+                    modifier, self.offset, self.lines, run_width,
+                    effective_scale_x, scale_y, rr, gg, bb, alpha,
+                );
                 last = i;
                 if c == '\n' {
                     last += 1;
@@ -1281,17 +1305,62 @@ impl FormatState {
 
         if last != txt.len() {
             let (rr, gg, bb) = color.to_rgb();
+            let alpha = (self.transparency * 255_f64) as u8;
+            let run_width = self.renderer.ui.lock().size_of_string(&txt[last..]);
             TextBuilder::new()
                 .text(&txt[last..])
                 .position(self.offset, (self.lines * 18 + 1) as f64)
-                .colour((rr, gg, bb, (self.transparency * 255_f64) as u8))
-                .scale_x(scale_x)
+                .colour((rr, gg, bb, alpha))
+                .scale_x(effective_scale_x)
                 .scale_y(scale_y)
+                .rotation(rotation)
                 .create(self);
-            self.offset += self.renderer.ui.lock().size_of_string(&txt[last..]) + 2.0;
+            self.add_decorations(
+                modifier, self.offset, self.lines, run_width,
+                effective_scale_x, scale_y, rr, gg, bb, alpha,
+            );
+            self.offset += run_width + 2.0;
             if self.offset > self.width {
                 self.width = self.offset;
             }
+        }
+    }
+
+    /// Adds underline and/or strikethrough overlay quads for a completed text run.
+    fn add_decorations(
+        &mut self,
+        modifier: &format::Modifier,
+        x: f64,
+        line: usize,
+        run_width: f64,
+        scale_x: f64,
+        scale_y: f64,
+        r: u8,
+        g: u8,
+        b: u8,
+        a: u8,
+    ) {
+        if run_width <= 0.0 {
+            return;
+        }
+        let line_y_base = (line * 18 + 1) as f64;
+        // Underline sits 1px below the baseline (y + 14 in the 18px line height)
+        if modifier.underlined {
+            ImageBuilder::new()
+                .texture("leafish:solid")
+                .position(x, line_y_base + 14.0 * scale_y)
+                .size(run_width * scale_x, 1.5 * scale_y)
+                .colour((r, g, b, a))
+                .create(self);
+        }
+        // Strikethrough sits at mid-height (y + 7)
+        if modifier.strikethrough {
+            ImageBuilder::new()
+                .texture("leafish:solid")
+                .position(x, line_y_base + 7.0 * scale_y)
+                .size(run_width * scale_x, 1.5 * scale_y)
+                .colour((r, g, b, a))
+                .create(self);
         }
     }
 }

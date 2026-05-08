@@ -1182,7 +1182,19 @@ impl Conn {
     }
 
     fn try_stream(address: &str, port: u16, protocol_version: i32) -> Result<Conn, Error> {
-        let stream = TcpStream::connect(format!("{}:{}", address, port))?;
+        use std::net::ToSocketAddrs;
+        use std::time::Duration;
+
+        let addr = format!("{}:{}", address, port)
+            .to_socket_addrs()?
+            .next()
+            .ok_or_else(|| Error::Err(format!("Could not resolve address: {}", address)))?;
+
+        // 10-second connect timeout so a dead server doesn't block the UI thread.
+        let stream = TcpStream::connect_timeout(&addr, Duration::from_secs(10))?;
+        // Disable Nagle's algorithm so small packets (keep-alives, etc.) are sent immediately
+        // rather than being buffered, which can cause spurious timeouts under light load.
+        stream.set_nodelay(true)?;
         Ok(Conn {
             stream,
             host: address.to_string(),
@@ -1467,10 +1479,14 @@ impl Conn {
                     if let Some(Value::Array(items)) = modinfo.get("modList") {
                         for item in items {
                             if let Value::Object(obj) = item {
-                                let modid = obj.get("modid").unwrap().as_str().unwrap().to_string();
-                                let version =
-                                    obj.get("version").unwrap().as_str().unwrap().to_string();
-
+                                let modid = obj.get("modid")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("unknown")
+                                    .to_string();
+                                let version = obj.get("version")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("?")
+                                    .to_string();
                                 forge_mods
                                     .push(crate::protocol::forge::ForgeMod { modid, version });
                             }
@@ -1490,22 +1506,21 @@ impl Conn {
             if let Some(Value::Array(items)) = forge_data.get("mods") {
                 for item in items {
                     if let Value::Object(obj) = item {
-                        let modid = obj.get("modId").unwrap().as_str().unwrap().to_string();
-                        let modmarker = obj.get("modmarker").unwrap().as_str().unwrap().to_string();
-
-                        let version = modmarker;
-
+                        let modid = obj.get("modId")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown")
+                            .to_string();
+                        let version = obj.get("modmarker")
+                            .and_then(Value::as_str)
+                            .unwrap_or("?")
+                            .to_string();
                         forge_mods.push(crate::protocol::forge::ForgeMod { modid, version });
                     }
                 }
             }
-            fml_network_version = Some(
-                forge_data
-                    .get("fmlNetworkVersion")
-                    .unwrap()
-                    .as_i64()
-                    .unwrap(),
-            );
+            fml_network_version = forge_data
+                .get("fmlNetworkVersion")
+                .and_then(Value::as_i64);
         }
 
         Ok((

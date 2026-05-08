@@ -39,6 +39,15 @@ pub fn default_vars() -> Vec<(SettingType, ConfigVar)> {
             },
         ),
         (
+            SettingType::Float(FloatSetting::UIScale),
+            ConfigVar {
+                name: "ui_scale",
+                description: "UI scale multiplier (1.0 = default, 2.0 = double size)",
+                serializable: true,
+                value: SettingValue::Float(1.0),
+            },
+        ),
+        (
             SettingType::Int(IntSetting::MasterVolume),
             ConfigVar {
                 name: "master_volume",

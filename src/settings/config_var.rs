@@ -54,6 +54,7 @@ pub enum BoolSetting {
 #[derive(PartialEq, PartialOrd, Hash, Eq, Ord, Clone, Copy)]
 pub enum FloatSetting {
     MouseSense,
+    UIScale,
 }
 
 #[derive(PartialEq, PartialOrd, Hash, Eq, Ord, Clone, Copy)]

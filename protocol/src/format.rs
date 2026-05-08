@@ -539,10 +539,9 @@ pub mod color {
             let color: String = Deserialize::deserialize(deserializer)?;
             match Color::from_str(&color) {
                 Ok(color) => Ok(color),
-                Err(e) => Err(serde::de::Error::custom(format!(
-                    "Failed to deserialize color: {}",
-                    e
-                ))),
+                // Unknown color strings (e.g. future Minecraft additions) fall back to
+                // the default rather than failing the entire chat message parse.
+                Err(_) => Ok(Color::None),
             }
         }
     }

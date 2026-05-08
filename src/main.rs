@@ -829,6 +829,7 @@ fn tick_all(
     game.console
         .lock()
         .tick(ui_container, game.renderer.clone(), delta, width as f64);
+    ui_container.ui_scale = game.settings.get_float(FloatSetting::UIScale).max(0.5).min(4.0) as f64;
     ui_container.tick(game.renderer.clone(), delta, width as f64, height as f64);
     let world = game
         .server
