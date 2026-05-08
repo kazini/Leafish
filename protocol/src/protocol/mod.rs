@@ -52,8 +52,8 @@ pub mod microsoft;
 pub mod offline_acc;
 
 pub const SUPPORTED_PROTOCOLS: [i32; 22] = [
-    765, 754, 753, 751, 736, 735, 578, 575, 498, 490, 485, 480, 477, 404, 340, 316, 315, 210, 109,
-    107, 47, 5,
+    754, 753, 751, 736, 735, 578, 575, 498, 490, 485, 480, 477, 404, 340, 316, 315, 210, 109, 107,
+    47, 5, 765,
 ];
 
 static CURRENT_PROTOCOL_VERSION: AtomicI32 = AtomicI32::new(SUPPORTED_PROTOCOLS[0]);

@@ -214,7 +214,7 @@ impl Game {
     ) -> Result<(), Error> {
         let default_protocol_version = self.settings.get_int(IntSetting::DefaultProtocolVersion);
         let (protocol_version, forge_mods, fml_network_version) =
-            match protocol::Conn::new(address, default_protocol_version)
+            match protocol::Conn::new(address, protocol::SUPPORTED_PROTOCOLS[0])
                 .and_then(|conn| conn.do_status())
             {
                 Ok(res) => {
@@ -513,8 +513,9 @@ impl ApplicationHandler for LeafishApp {
             keybinds: self.keybinds.clone(),
         };
 
-        // Always enable network debug to trace protocol issues
-        protocol::enable_network_debug();
+        if self.opt.network_debug {
+            protocol::enable_network_debug();
+        }
 
         if let Some(ref filename) = self.opt.network_parse_packet.clone() {
             let data = fs::read(filename).unwrap();

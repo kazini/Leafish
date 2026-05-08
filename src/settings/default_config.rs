@@ -153,7 +153,7 @@ Used to identify this client vs others."#,
                 name: "default_protocol_version",
                 description: "Protocol version to use in the autodetection ping",
                 serializable: true,
-                value: SettingValue::Num(340), // for now use 1.12.2 as 1.8.9 is too unstable to be the default for now
+                value: SettingValue::Num(754), // 1.16.5 — used as the ping version for server autodetection
             },
         ),
     ]

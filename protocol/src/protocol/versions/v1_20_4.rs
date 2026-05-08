@@ -212,14 +212,19 @@ protocol_packet_ids!(
     configuration Configuration {
         serverbound Serverbound {
             0x00 => ConfigClientInformation
-            0x02 => AcknowledgeConfiguration
-            0x03 => ConfigPong
+            0x03 => AcknowledgeConfiguration
+            0x05 => ConfigPong
             0x07 => ServerboundKnownPacks
         }
         clientbound Clientbound {
-            0x00 => ConfigPluginMessage
-            0x02 => FinishConfiguration
-            0x05 => ConfigRegistryData
+            0x01 => ConfigPluginMessage
+            0x02 => ConfigDisconnect
+            0x03 => FinishConfiguration
+            0x05 => ConfigPing
+            0x07 => ConfigRegistryData
+            0x0b => ConfigFeatureFlags
+            0x0d => ConfigUpdateTags
+            0x0e => ClientboundKnownPacks
         }
     }
 );

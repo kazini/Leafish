@@ -284,7 +284,12 @@ impl Server {
                 protocol::packet::Packet::LoginSuccess_UUID_Properties(val) => {
                     warn!("Server is running in offline mode");
                     debug!("Login: {} {:?}", val.username, val.uuid);
-                    do_configuration_handshake(&mut conn)?;
+                    // Configuration state was introduced in 1.20.2 (protocol 764+)
+                    if protocol_version >= 764 {
+                        do_configuration_handshake(&mut conn)?;
+                    } else {
+                        conn.state = protocol::State::Play;
+                    }
                     let server = Server::connect0(
                         conn,
                         protocol_version,
@@ -351,7 +356,12 @@ impl Server {
                 protocol::packet::Packet::LoginSuccess_UUID_Properties(val) => {
                     debug!("Login: {} {:?}", val.username, val.uuid);
                     uuid = val.uuid;
-                    do_configuration_handshake(&mut conn)?;
+                    // Configuration state was introduced in 1.20.2 (protocol 764+)
+                    if protocol_version >= 764 {
+                        do_configuration_handshake(&mut conn)?;
+                    } else {
+                        conn.state = protocol::State::Play;
+                    }
                     break;
                 }
                 protocol::packet::Packet::LoginDisconnect(val) => {
